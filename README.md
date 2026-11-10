@@ -6,7 +6,7 @@ The app brings the AIAG-VDA seven-step workflow, product structure, failure chai
 
 [Open the CAPE app](https://play.managedapps.cloud.microsoft/apps/088be080-35da-497a-a83e-0b870c975893) · [Operational handover](docs/HANDOVER.md) · [Voice broker](voice-broker/README.md)
 
-> **Release status:** the CAPE app is deployed and the user confirmed typed Copilot and realtime voice work. The dedicated animated voice console in this source revision is a subsequent UI enhancement; do not assume it is live until its own commit has been pushed, built and deployed. The operational handover records exact deployment evidence.
+> **Release status:** the dedicated animated voice console is deployed to the CAPE app at commit `12c6ed88787190bceb77602cde62d5908262f4d0` and published to this GitHub repository. The user confirmed typed Copilot and realtime voice on the preceding release; the new console was checked locally, but its hosted audio/Stop behavior has not been independently observed. The operational handover records exact deployment evidence.
 
 ## Contents
 
@@ -261,6 +261,7 @@ Tests cover cancellation during microphone/token/SDP setup, timeout handling, de
 | App ID | `088be080-35da-497a-a83e-0b870c975893` |
 | Native repository ID | `d1d3cd61-ab84-4863-b6e2-720b38eee6eb` |
 | Baseline deployed commit | `6b8ebc262fea43dd98389e67e109a2f3b6eade2a` |
+| Current deployed voice-console commit | `12c6ed88787190bceb77602cde62d5908262f4d0` |
 | Release evidence and rollback | [HANDOVER.md](docs/HANDOVER.md) |
 
 The original MSIT app is left untouched. Migration created a new app and native platform repository, new generated connector bindings and target authentication. It did not copy original sharing, credentials or business data.
@@ -305,7 +306,7 @@ Use the **Managed Runtime `ms` CLI** and **platform-managed Git/build**, or App 
 
 The migration used isolated CLI tooling (`@microsoft/managed-apps-cli` 0.32.2) with its required Node runtime, without changing the app's frozen SDK/dependencies. CLI login and native Git use separate authentication clients. Git credentials belong in the protected OS store; configuring a helper does not prove a reusable credential is present.
 
-**GitHub:** this README is ready for a GitHub repository, but GitHub is not automatically the app's deployment remote. No new GitHub repository or remote binding is created by these source changes.
+**GitHub:** the source is published at [Roelzz/code_app_voice](https://github.com/Roelzz/code_app_voice) using the Roelzz account. GitHub is a source publication destination, not the app's deployment binding; the app retains its native Managed Runtime repository.
 
 ## CSP and troubleshooting
 
