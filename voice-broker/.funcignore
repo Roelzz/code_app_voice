@@ -1,0 +1,9 @@
+.venv/
+tests/
+.pytest_cache/
+.ruff_cache/
+.env
+.env.example
+pyproject.toml
+uv.lock
+README.md

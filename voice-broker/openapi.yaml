@@ -1,0 +1,79 @@
+swagger: "2.0"
+info:
+  title: DFMEA Realtime Voice Broker
+  description: Requests short-lived Azure OpenAI Realtime client secrets for the signed-in user.
+  version: "1.0"
+host: dfmea-voice-broker.azurewebsites.net
+basePath: /api
+schemes:
+  - https
+consumes:
+  - application/json
+produces:
+  - application/json
+securityDefinitions:
+  oauth2:
+    type: oauth2
+    flow: accessCode
+    authorizationUrl: https://login.microsoftonline.com/efb073bb-283b-4757-a252-22af963721bc/oauth2/v2.0/authorize
+    tokenUrl: https://login.microsoftonline.com/efb073bb-283b-4757-a252-22af963721bc/oauth2/v2.0/token
+    scopes:
+      api://86e59913-7a44-4a76-baa2-43409fbbe006/user_impersonation: Request short-lived realtime voice tokens
+security:
+  - oauth2:
+      - api://86e59913-7a44-4a76-baa2-43409fbbe006/user_impersonation
+paths:
+  /realtime-token:
+    post:
+      operationId: RequestRealtimeToken
+      summary: Request a short-lived realtime voice token
+      description: Returns a short-lived client secret. Do not cache or persist the response.
+      parameters:
+        - in: body
+          name: body
+          required: false
+          schema:
+            type: object
+            properties:
+              voice:
+                type: string
+                enum:
+                  - marin
+                  - cedar
+                  - alloy
+                  - ash
+                  - ballad
+                  - coral
+                  - echo
+                  - sage
+                  - shimmer
+                  - verse
+      responses:
+        "200":
+          description: A short-lived realtime token and call endpoint.
+          schema:
+            type: object
+            required:
+              - value
+              - callsUrl
+              - model
+            properties:
+              value:
+                type: string
+                format: password
+              expiresAt:
+                type: integer
+                format: int64
+              callsUrl:
+                type: string
+                format: uri
+              model:
+                type: string
+        "400":
+          description: Unsupported voice.
+        "401":
+          description: Entra authentication is required.
+        "502":
+          description: Azure OpenAI could not issue a realtime token.
+        "504":
+          description: Azure OpenAI timed out.

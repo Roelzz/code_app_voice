@@ -1,0 +1,33 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/Managed-Apps/main/schemas/ms.config.schema.json",
+  "version": "0.0",
+  "appId": "088be080-35da-497a-a83e-0b870c975893",
+  "appDisplayName": "DFMEA Workshop Studio",
+  "environmentId": "28207d24-1fb8-e2ed-ba6e-180550d63611",
+  "description": "DFMEA workshop with CAPE Work IQ and authenticated realtime speech",
+  "repoType": "native",
+  "cloud": "public",
+  "buildPath": "./dist",
+  "buildCommand": "npm run build",
+  "buildEntryPoint": "index.html",
+  "repositoryId": "d1d3cd61-ab84-4863-b6e2-720b38eee6eb",
+  "connectionReferences": {
+    "fb7b31ad-cb41-4e82-a75d-b5353ba2d2e1": {
+      "id": "/providers/Microsoft.PowerApps/apis/shared_a365copilotchatmcp",
+      "displayName": "Work IQ Copilot MCP",
+      "dataSources": [
+        "a365copilotchatmcp"
+      ],
+      "authenticationType": "certOauth",
+      "dataSets": {}
+    },
+    "32f300de-5d26-4e97-9002-65b677ae7050": {
+      "id": "/providers/Microsoft.PowerApps/apis/shared_new-5fdfmea-20realtime-20voice-20broker-5fcb638419537c7c20",
+      "displayName": "DFMEA Realtime Voice Broker",
+      "dataSources": [
+        "new_5fdfmea_20realtime_20voice_20broker_5fcb638419537c7c20"
+      ],
+      "dataSets": {}
+    }
+  }
+}
