@@ -46,7 +46,7 @@ test("all three specialists use exact discovered schema names and the target env
     session.select(helper.id);
     assert.equal(await session.text("Read-only DFMEA question"), "Agent answer");
     const args = service.ExecuteCopilotAsyncV2.mock.calls.at(-1).arguments;
-    assert.deepEqual(args, [helper.schemaName, { message: "Read-only DFMEA question" }, undefined, HELPER_ENVIRONMENT]);
+    assert.deepEqual(args, [helper.schemaName, { message: "Read-only DFMEA question", notificationUrl: "https://notificationurlplaceholder" }, undefined, HELPER_ENVIRONMENT]);
   }
   assert.equal(workiq.callWorkIqCopilotChatText.mock.callCount(), 0);
 });

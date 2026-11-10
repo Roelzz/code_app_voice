@@ -128,12 +128,14 @@ test("manual chooser has four helpers, defaults to Work IQ, routes typed and voi
     await click("Facilitation questions");
     const typed = service.ExecuteCopilotAsyncV2.mock.calls.at(-1).arguments;
     assert.equal(typed[0], schema);
+    assert.equal(typed[1].notificationUrl, "https://notificationurlplaceholder");
     assert.equal(typed[2], undefined);
     assert.match(document.body.textContent, /Specialist answer/);
     assert.equal(voiceOptions.helperName, name);
     await act(async () => assert.equal(await voiceOptions.askCopilot("Read-only voice question"), "Specialist answer"));
     const voice = service.ExecuteCopilotAsyncV2.mock.calls.at(-1).arguments;
     assert.equal(voice[0], schema);
+    assert.equal(voice[1].notificationUrl, "https://notificationurlplaceholder");
     assert.equal(voice[2], "conversation-one");
   }
   assert.equal(workiq.callWorkIqCopilotChatText.mock.callCount(), 1);

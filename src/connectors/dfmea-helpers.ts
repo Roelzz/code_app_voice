@@ -113,7 +113,8 @@ export class HelperSession {
     let response: unknown;
     try {
       const result = await MicrosoftCopilotStudioService.ExecuteCopilotAsyncV2(
-        schemaName, { message: prompt }, this.conversationId, HELPER_ENVIRONMENT,
+        // Required by the connector; Microsoft documents this unused placeholder for synchronous responses.
+        schemaName, { message: prompt, notificationUrl: "https://notificationurlplaceholder" }, this.conversationId, HELPER_ENVIRONMENT,
       );
       if (!result.success) throw new HelperError("connection", "The selected agent connection needs attention. Check sign-in, agent access and availability.");
       // The generated operation currently declares void; validate its actual payload without modifying codegen.

@@ -146,6 +146,8 @@ The Microsoft 365 file-search toggle belongs only to Work IQ and is hidden for s
 
 The generated Studio operation currently declares `IOperationResult<void>` despite its documented response payload. The app treats `result.data` as untrusted, validates `responses`, `lastResponse` and `conversationId`, and never patches generated code. Ordered text activities are combined without appending a duplicate `lastResponse`. Non-text-only responses and authentication/card actions are not executed.
 
+The generated body type is also a generic record. Its underlying connector schema requires `notificationUrl`; each call includes Microsoft's documented synchronous placeholder `https://notificationurlplaceholder`. This is not a custom callback server. See the [official invocation guidance](https://learn.microsoft.com/en-us/power-apps/developer/code-apps/how-to/connect-to-copilot-studio#request-parameters) for the shared connector's request contract; this app still uses Managed Runtime generation/deployment, not the Code Apps CLI or SDK.
+
 **Verification boundary:** discovery, code generation and mocked routing tests do not establish hosted agent invocation. The handover records the current hosted acceptance evidence and exact deployed commit.
 
 ## Talk to Copilot
