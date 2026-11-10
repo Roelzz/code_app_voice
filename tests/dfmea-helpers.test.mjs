@@ -118,6 +118,18 @@ test("agent failures never fall back to Work IQ or leak upstream details", async
   assert.equal(workiq.callWorkIqCopilotChatText.mock.callCount(), 0);
 });
 
+test("platform harness rejection is an explicit unsupported error, never a suggestion or completed conversation", async () => {
+  const session = new HelperSession();
+  session.select("actions");
+  service.ExecuteCopilotAsyncV2 = mock.fn(async () => reply("This action doesn't support agents built with the GitHub Copilot harness. Learn more"));
+  await assert.rejects(session.text("Question"), (error) => error.code === "unsupported");
+  await assert.rejects(session.items("Actions", { action: "string", type: "string", rationale: "string" }),
+    (error) => error.code === "unsupported");
+  assert.equal(service.ExecuteCopilotAsyncV2.mock.calls[1].arguments[2], undefined);
+  assert.equal(workiq.callWorkIqCopilotChatText.mock.callCount(), 0);
+  assert.equal(workiq.callWorkIqCopilotChatItems.mock.callCount(), 0);
+});
+
 test("only complete validated rows become suggestions; clarification stays non-applicable text", async () => {
   const session = new HelperSession();
   session.select("actions");

@@ -20,7 +20,7 @@ export function getHelper(id: HelperId) {
 }
 
 export class HelperError extends Error {
-  constructor(readonly code: "busy" | "stale" | "connection" | "format" | "timeout", message: string) {
+  constructor(readonly code: "busy" | "stale" | "connection" | "format" | "timeout" | "unsupported", message: string) {
     super(message);
     this.name = "HelperError";
   }
@@ -41,6 +41,9 @@ export function parseStudioReply(data: unknown): { text: string; conversationId:
   const parts = Array.isArray(responses) ? responses.filter((text: string) => text.trim()) : [];
   const text = parts.length ? parts.join("\n\n") : typeof lastResponse === "string" ? lastResponse.trim() : "";
   if (!text) throw new HelperError("format", "The helper returned no text. Interactive cards and sign-in actions are not supported here.");
+  if (/^This action (?:doesn't|does not) support agents built with the GitHub Copilot harness[.\s]/i.test(text.trim())) {
+    throw new HelperError("unsupported", "This connector action cannot invoke agents built with the GitHub Copilot harness. These agents need a supported publishing channel; changing CSP or retrying will not resolve this.");
+  }
   return { text, conversationId };
 }
 
