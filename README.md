@@ -6,7 +6,7 @@ The app brings the AIAG-VDA seven-step workflow, product structure, failure chai
 
 [Open the CAPE app](https://play.managedapps.cloud.microsoft/apps/088be080-35da-497a-a83e-0b870c975893) · [Operational handover](docs/HANDOVER.md) · [Voice broker](voice-broker/README.md)
 
-> **Release status:** the dedicated animated voice console is deployed to the CAPE app at commit `12c6ed88787190bceb77602cde62d5908262f4d0` and published to this GitHub repository. The user confirmed typed Copilot and realtime voice on the preceding release; the new console was checked locally, but its hosted audio/Stop behavior has not been independently observed. The operational handover records exact deployment evidence.
+> **Release status:** the four-helper chooser, dedicated animated voice console and FRE specialist MCP integration are deployed to the CAPE app at commit `7520e85d4c4ae27539f5611c611e03a4817493de`, also pushed to this GitHub repository. The user confirmed all three typed specialist answers in the hosted preview, then confirmed live text, spoken answers and microphone release. This is user-observed acceptance, not an independently captured browser/network trace. The operational handover records exact evidence and rollback.
 
 ## Contents
 
@@ -129,7 +129,7 @@ The initial dataset is a fictional wearable vital-signs patch. State is in brows
 
 ## Choose a specialist helper
 
-> **Integration status:** all three user-published FRE agents returned real answers through authenticated MCP calls. This source replaces the incompatible standard Studio action with a dedicated generated MCP connector. Hosted connector, selected-helper audio and deployment acceptance are still pending; the live app remains the voice-console release stated above. Direct agent answers and local tests are not hosted end-to-end proof.
+> **Integration status:** deployed and user-verified. All three user-published FRE agents answered direct questions and follow-ups, all three returned typed answers through the hosted preview's generated MCP connector, and the user confirmed selected-specialist text, voice playback and microphone release in the live app. The incompatible standard Studio action is removed.
 
 Select **Selected helper · Change** in the facilitator panel to open the compact chooser. The choice applies to both the typed facilitator controls and the realtime voice console.
 
@@ -289,6 +289,15 @@ UV_PROJECT_ENVIRONMENT=/tmp/dfmea-broker-venv uv run pytest -q
 Tests cover cancellation during microphone/token/SDP setup, timeout handling, deduplication, speech continuation ordering, audio ownership, safe failures, token validation and voice-console interactions. Mocked tests do not prove live microphone/audio behavior.
 
 Helper tests additionally exercise the real facilitator/chooser with mocked connector services: default/four-way selection, identical typed/voice routing, conversation isolation/reset, stale-result and overlap guards, ordered replies, no fallback, clarification versus validated Apply, and safe failures.
+
+The connector's C# transport has an SDK-only test harness (14 checks, no NuGet packages). With an already-installed .NET 10 SDK:
+
+```bash
+dotnet restore tests/specialist-connector/Check.csproj --source tests/specialist-connector
+dotnet run --project tests/specialist-connector/Check.csproj --no-restore
+```
+
+It compiles the actual `Script.csx` against the SDK's Newtonsoft assembly and tests the MCP handshake, fixed destinations/tool, response bounds and sanitized errors. The app's production stack and npm dependencies do not change.
 
 ## Deployment and cross-tenant migration
 
