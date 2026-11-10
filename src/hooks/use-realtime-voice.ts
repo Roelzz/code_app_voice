@@ -8,6 +8,7 @@ export interface RealtimeVoiceToken {
 }
 
 export type RealtimeVoiceStatus = "idle" | "connecting" | "connected";
+export type RealtimeVoiceActivity = "listening" | "hearing" | "processing" | "consulting" | "speaking";
 
 interface RealtimeEvent {
   type?: string;
@@ -81,6 +82,7 @@ export function useRealtimeVoice({
   onError: (message: string) => void;
 }) {
   const [status, setStatus] = useState<RealtimeVoiceStatus>("idle");
+  const [activity, setActivity] = useState<RealtimeVoiceActivity>("listening");
   const [error, setError] = useState<string | null>(null);
   const runRef = useRef<VoiceRun | null>(null);
   const askCopilotRef = useRef(askCopilot);
@@ -121,6 +123,7 @@ export function useRealtimeVoice({
   const stop = useCallback(() => {
     cleanup();
     setStatus("idle");
+    setActivity("listening");
   }, [cleanup]);
 
   const start = useCallback(async () => {
@@ -236,6 +239,23 @@ export function useRealtimeVoice({
           if (run.timer !== null) clearTimeout(run.timer);
           run.timer = null;
           setStatus("connected");
+          setActivity("listening");
+          return;
+        }
+        if (event.type === "input_audio_buffer.speech_started") {
+          setActivity("hearing");
+          return;
+        }
+        if (event.type === "input_audio_buffer.speech_stopped") {
+          setActivity("processing");
+          return;
+        }
+        if (event.type === "output_audio_buffer.started") {
+          setActivity("speaking");
+          return;
+        }
+        if (event.type === "output_audio_buffer.stopped" || event.type === "output_audio_buffer.cleared") {
+          setActivity(pending ? "consulting" : "listening");
           return;
         }
         if (event.type === "response.done") {
@@ -262,6 +282,7 @@ export function useRealtimeVoice({
         }
         const request: VoiceToolCall = { callId, responseId: event.response_id, output: null };
         pending = request;
+        setActivity("consulting");
         run.toolTimer = setTimeout(() => {
           fail("Copilot did not answer within the 30-second host limit. Try a shorter question.");
         }, 30_000);
@@ -331,5 +352,5 @@ export function useRealtimeVoice({
 
   useEffect(() => cleanup, [cleanup]);
 
-  return { status, error, start, stop };
+  return { status, activity, error, start, stop };
 }

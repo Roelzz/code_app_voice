@@ -180,6 +180,34 @@ test("requires Work IQ, deduplicates calls, then explicitly allows speech withou
   assert.equal(fetchSignal.aborted, true);
 });
 
+test("voice activity follows real speech, tool and audio-buffer events and resets on Stop", async () => {
+  const answer = deferred();
+  ask = mock.fn(() => answer.promise);
+  const channel = await connect();
+  assert.equal(current.activity, "listening");
+  await emit(channel, { type: "input_audio_buffer.speech_started" });
+  assert.equal(current.activity, "hearing");
+  await emit(channel, { type: "input_audio_buffer.speech_stopped" });
+  assert.equal(current.activity, "processing");
+  await emit(channel, questionEvent());
+  assert.equal(current.activity, "consulting");
+  await emit(channel, { type: "output_audio_buffer.started" });
+  assert.equal(current.activity, "speaking");
+  await emit(channel, { type: "output_audio_buffer.stopped" });
+  assert.equal(current.activity, "consulting");
+  await act(async () => answer.resolve("Work IQ answer"));
+  await emit(channel, { type: "response.done", response: { id: "response-one" } });
+  await emit(channel, { type: "output_audio_buffer.started" });
+  assert.equal(current.activity, "speaking");
+  await emit(channel, { type: "output_audio_buffer.cleared" });
+  assert.equal(current.activity, "listening");
+  const lateEvent = channel.onmessage;
+  await act(async () => current.stop());
+  await act(async () => lateEvent({ data: JSON.stringify({ type: "output_audio_buffer.started" }) }));
+  assert.equal(current.status, "idle");
+  assert.equal(current.activity, "listening");
+});
+
 test("stop during microphone permission releases the late stream without requesting a token", async () => {
   const permission = deferred();
   getMicrophone = () => permission.promise;

@@ -44,6 +44,102 @@
 
 @custom-variant dark (&:is(.dark *));
 
+.voice-console-stage {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  padding: 1.5rem 0;
+  background: radial-gradient(ellipse at 50% 40%, color-mix(in oklch, var(--primary) 8%, transparent), transparent 65%);
+}
+
+.voice-core {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: min(15rem, 65vw);
+  aspect-ratio: 1;
+  margin-bottom: 1.5rem;
+  color: var(--primary);
+}
+
+.voice-orbit {
+  position: absolute;
+  border: 1px solid color-mix(in oklch, var(--primary) 35%, transparent);
+  border-radius: 50%;
+}
+
+.voice-orbit-outer {
+  inset: 0;
+  border-style: dashed;
+}
+
+.voice-orbit-middle {
+  inset: 10%;
+  border-width: 3px;
+  border-inline-color: transparent;
+}
+
+.voice-orbit-inner {
+  inset: 21%;
+  border-style: dotted;
+}
+
+.voice-core-center {
+  display: grid;
+  place-items: center;
+  width: 43%;
+  aspect-ratio: 1;
+  border: 1px solid var(--primary);
+  border-radius: 50%;
+  background: var(--background);
+  box-shadow: 0 0 2rem color-mix(in oklch, var(--primary) 12%, transparent);
+}
+
+.voice-core-cross {
+  position: absolute;
+  width: 1.5rem;
+  height: 3px;
+  background: var(--primary);
+}
+
+.voice-core-cross-top { top: 0; }
+.voice-core-cross-bottom { bottom: 0; }
+
+[data-voice-state="connecting"] .voice-orbit-middle,
+[data-voice-state="processing"] .voice-orbit-middle,
+[data-voice-state="consulting"] .voice-orbit-middle {
+  animation: voice-orbit 4s linear infinite;
+}
+
+[data-voice-state="listening"] .voice-orbit-outer {
+  animation: voice-orbit 30s linear infinite;
+}
+
+[data-voice-state="hearing"] .voice-core-center,
+[data-voice-state="speaking"] .voice-core-center {
+  animation: voice-breathe 1.4s ease-in-out infinite alternate;
+}
+
+[data-voice-state="error"] .voice-core { color: var(--destructive); }
+
+@keyframes voice-orbit { to { transform: rotate(360deg); } }
+@keyframes voice-breathe { to { transform: scale(1.08); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-console *, .voice-console *::before, .voice-console *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .voice-console-stage { background: Canvas; }
+  .voice-orbit, .voice-core-center { border-color: CanvasText; box-shadow: none; }
+  .voice-orbit-middle { border-inline-color: transparent; }
+  .voice-core { color: CanvasText; }
+  .voice-core-cross { background: CanvasText; }
+}
+
 :root {
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);

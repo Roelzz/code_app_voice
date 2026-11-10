@@ -2,11 +2,8 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Check,
-  LoaderCircle,
   Lightbulb,
   ListChecks,
-  Mic,
-  MicOff,
   MessagesSquare,
   NotebookPen,
   Plus,
@@ -25,6 +22,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { ConnectorErrorState, ErrorState } from "@/components/states";
 import { DictationButton } from "@/components/dictation-button";
+import { VoiceConsole } from "@/components/voice-console";
 import { speechOutputSupported, useSpeechReader } from "@/hooks/use-voice";
 import { useRealtimeVoice, type RealtimeVoiceToken } from "@/hooks/use-realtime-voice";
 import {
@@ -540,37 +538,21 @@ export function AiFacilitator({
           </div>
         )}
         {requestRealtimeToken && (
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant={realtimeVoice.status === "connected" ? "default" : "outline"}
-              disabled={busy && realtimeVoice.status === "idle"}
-              aria-pressed={realtimeVoice.status !== "idle"}
-              onClick={() => {
-                setVoiceMessage(null);
-                if (realtimeVoice.status !== "idle") realtimeVoice.stop();
-                else {
-                  stopSpeaking();
-                  setReadAloud(false);
-                  void realtimeVoice.start();
-                }
-              }}
-            >
-              {realtimeVoice.status === "connecting" ? (
-                <LoaderCircle aria-hidden="true" className="animate-spin" />
-              ) : realtimeVoice.status === "connected" ? (
-                <MicOff aria-hidden="true" />
-              ) : (
-                <Mic aria-hidden="true" />
-              )}
-              {realtimeVoice.status === "connecting"
-                ? "Stop connecting"
-                : realtimeVoice.status === "connected"
-                  ? "Stop voice"
-                  : "Talk to Copilot"}
-            </Button>
-          </div>
+          <VoiceConsole
+            status={realtimeVoice.status}
+            activity={realtimeVoice.activity}
+            error={realtimeVoice.error || voiceMessage}
+            focus={element?.name ?? data.project.product}
+            step={`Step ${step.number}: ${step.title}`}
+            disabled={busy}
+            onStart={() => {
+              setVoiceMessage(null);
+              stopSpeaking();
+              setReadAloud(false);
+              void realtimeVoice.start();
+            }}
+            onStop={realtimeVoice.stop}
+          />
         )}
       </div>
       {(realtimeVoice.error || voiceMessage) && (
