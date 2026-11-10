@@ -29,13 +29,12 @@
       ],
       "dataSets": {}
     },
-    "e0b4b475-d32b-4e29-807c-5cb99abf91f4": {
-      "id": "/providers/Microsoft.PowerApps/apis/shared_microsoftcopilotstudio",
-      "displayName": "Microsoft Copilot Studio",
+    "67e8a684-695c-46f0-9512-53793a317b72": {
+      "id": "/providers/Microsoft.PowerApps/apis/shared_new-5fdfmea-20specialist-20mcp-5fcb638419537c7c20",
+      "displayName": "DFMEA Specialist MCP",
       "dataSources": [
-        "microsoftcopilotstudio"
+        "new_5fdfmea_20specialist_20mcp_5fcb638419537c7c20"
       ],
-      "authenticationType": "oauthDefault",
       "dataSets": {}
     }
   }

@@ -7,8 +7,9 @@ import { Window } from "happy-dom";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { CONVERSATION, NEXT_CONVERSATION, mcpService, toolResult, toolCalls } from "./mcp-fixture.mjs";
 
-const service = { ExecuteCopilotAsyncV2: mock.fn() };
+const service = mcpService();
 const workiq = {
   callWorkIqCopilotChatText: mock.fn(async () => "Work IQ answer"),
   callWorkIqCopilotChatItems: mock.fn(async () => []),
@@ -47,8 +48,8 @@ async function load(path) {
   for (const [, name] of [...source.matchAll(/from "(@\/[^"]+)"/g)]) {
     source = source.replaceAll(`"${name}"`, JSON.stringify(await load(name.slice(2))));
   }
-  source = source.replace(/import \{ MicrosoftCopilotStudioService \} from "\.\.\/\.\.\/generated";/,
-    "const MicrosoftCopilotStudioService=globalThis.helperIntegration.service;");
+  source = source.replace(/import \{ DFMEASpecialistMCPService \} from "\.\.\/\.\.\/generated";/,
+    "const DFMEASpecialistMCPService=globalThis.helperIntegration.service;");
   for (const [, name] of [...source.matchAll(/from "(\.[^"]+)"/g)]) {
     source = source.replaceAll(`"${name}"`, JSON.stringify(await load(posix.normalize(posix.join(posix.dirname(path), name)))));
   }
@@ -68,7 +69,7 @@ beforeEach(async () => {
     const value = name === "IS_REACT_ACT_ENVIRONMENT" ? true : name === "window" ? window : name === "getComputedStyle" ? window[name].bind(window) : window[name];
     Object.defineProperty(globalThis, name, { value, writable: true, configurable: true });
   }
-  service.ExecuteCopilotAsyncV2 = mock.fn(async () => ({ success: true, data: { responses: ["Specialist answer"], conversationId: "conversation-one" } }));
+  Object.assign(service, mcpService());
   workiq.callWorkIqCopilotChatText.mock.resetCalls();
   stopVoice.mock.resetCalls();
   const { AiFacilitator } = await import(await load("components/ai-facilitator"));
@@ -117,26 +118,26 @@ test("manual chooser has four helpers, defaults to Work IQ, routes typed and voi
   assert.match(document.body.textContent, /Selected helper · ChangeMicrosoft 365 Copilot/);
   await click("Facilitation questions");
   assert.equal(workiq.callWorkIqCopilotChatText.mock.callCount(), 1);
-  for (const [name, schema] of [
-    ["Failure Mode Identifier", "Default_Failure_Mode_Identifier_c24230"],
-    ["Failure Risk Prioritizer", "Default_Failure_Risk_Prioritizer_b311df"],
-    ["Corrective Action Advisor", "Default_Corrective_Action_Advisor_8765ed"],
+  for (const [name, method] of [
+    ["Failure Mode Identifier", service.FailureModeMcp],
+    ["Failure Risk Prioritizer", service.RiskMcp],
+    ["Corrective Action Advisor", service.ActionMcp],
   ]) {
     await select(name);
     assert.equal(document.querySelector("#ai-search-files"), null);
     assert.doesNotMatch(document.body.textContent, /Work IQ answer/);
     await click("Facilitation questions");
-    const typed = service.ExecuteCopilotAsyncV2.mock.calls.at(-1).arguments;
-    assert.equal(typed[0], schema);
-    assert.equal(typed[1].notificationUrl, "https://notificationurlplaceholder");
-    assert.equal(typed[2], undefined);
+    const typed = toolCalls(method).at(-1);
+    assert.equal(typed.params.name, "send-message");
+    assert.equal(typed.params.arguments.conversationId, undefined);
     assert.match(document.body.textContent, /Specialist answer/);
     assert.equal(voiceOptions.helperName, name);
     await act(async () => assert.equal(await voiceOptions.askCopilot("Read-only voice question"), "Specialist answer"));
-    const voice = service.ExecuteCopilotAsyncV2.mock.calls.at(-1).arguments;
-    assert.equal(voice[0], schema);
-    assert.equal(voice[1].notificationUrl, "https://notificationurlplaceholder");
-    assert.equal(voice[2], "conversation-one");
+    const voice = toolCalls(method).at(-1);
+    assert.equal(voice.params.name, "send-message");
+    assert.match(voice.params.arguments.message, /Read-only voice question/);
+    assert.equal(voice.params.arguments.conversationId, CONVERSATION);
+    assert.equal(toolCalls(method).length, 2, "Exactly one specialist invocation per typed/voice question");
   }
   assert.equal(workiq.callWorkIqCopilotChatText.mock.callCount(), 1);
   assert.equal(stopVoice.mock.callCount(), 7); // Four typed starts plus three switches.
@@ -149,11 +150,10 @@ test("new conversation resets history/output and clarification never becomes an 
   assert.equal(addChain.mock.callCount(), 0);
   await click("New conversation");
   assert.doesNotMatch(document.body.textContent, /Specialist answer/);
-  service.ExecuteCopilotAsyncV2 = mock.fn(async () => ({
-    success: true, data: { conversationId: "new-conversation", responses: ['[{"failureMode":"Signal lost","effect":"Monitoring delayed","cause":"Contact fault","rationale":"Review contact design"}]'] },
-  }));
+  Object.assign(service, mcpService(async () => toolResult(
+    '[{"failureMode":"Signal lost","effect":"Monitoring delayed","cause":"Contact fault","rationale":"Review contact design"}]', NEXT_CONVERSATION)));
   await click("Suggest failure modes");
-  assert.equal(service.ExecuteCopilotAsyncV2.mock.calls[0].arguments[2], undefined);
+  assert.equal(toolCalls(service.FailureModeMcp)[0].params.arguments.conversationId, undefined);
   const apply = [...document.querySelectorAll("button")].find((item) => item.textContent.includes("Add to failure network"));
   assert.ok(apply);
   await act(async () => apply.click());
@@ -163,7 +163,7 @@ test("new conversation resets history/output and clarification never becomes an 
 
 test("specialist failure stays visible and never invokes Work IQ fallback", async () => {
   await select("Failure Risk Prioritizer");
-  service.ExecuteCopilotAsyncV2 = mock.fn(async () => ({ success: false, error: "private details" }));
+  service.RiskMcp = mock.fn(async () => ({ success: false, error: "private details" }));
   await click("Challenge ratings");
   assert.match(document.body.textContent, /selected helper couldn't complete/i);
   assert.doesNotMatch(document.body.textContent, /private details/);

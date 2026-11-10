@@ -1,0 +1,68 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "DFMEA Specialist MCP",
+    "description": "Delegated MCP access to the three published DFMEA specialists in Managed_App_Deploy_FRE.",
+    "version": "1.0"
+  },
+  "host": "api.powerplatform.com",
+  "basePath": "/copilotstudio-mcp/tenants/efb073bb-283b-4757-a252-22af963721bc/environments/75660de8-d408-e9ce-bc60-84d4f6a30d0b/agents",
+  "schemes": ["https"],
+  "consumes": ["application/json"],
+  "produces": ["application/json"],
+  "securityDefinitions": {
+    "oauth2": {
+      "type": "oauth2",
+      "flow": "accessCode",
+      "authorizationUrl": "https://login.microsoftonline.com/efb073bb-283b-4757-a252-22af963721bc/oauth2/v2.0/authorize",
+      "tokenUrl": "https://login.microsoftonline.com/efb073bb-283b-4757-a252-22af963721bc/oauth2/v2.0/token",
+      "scopes": {
+        "https://api.powerplatform.com/copilotstudio-mcp/MCS.InvokeAsMCP": "Invoke published DFMEA specialists as the signed-in user"
+      }
+    }
+  },
+  "security": [{"oauth2": ["https://api.powerplatform.com/copilotstudio-mcp/MCS.InvokeAsMCP"]}],
+  "paths": {
+    "/Default_Failure_Mode_Identifier_20cdd7": {
+      "post": {
+        "operationId": "FailureModeMcp",
+        "summary": "Call Failure Mode Identifier MCP",
+        "parameters": [{"name": "body", "in": "body", "required": true, "schema": {"$ref": "#/definitions/McpRequest"}}],
+        "responses": {"200": {"description": "Bounded MCP event stream wrapped as JSON.", "schema": {"$ref": "#/definitions/McpEvents"}}}
+      }
+    },
+    "/Default_Failure_Risk_Prioritizer_5a9a6a": {
+      "post": {
+        "operationId": "RiskMcp",
+        "summary": "Call Failure Risk Prioritizer MCP",
+        "parameters": [{"name": "body", "in": "body", "required": true, "schema": {"$ref": "#/definitions/McpRequest"}}],
+        "responses": {"200": {"description": "Bounded MCP event stream wrapped as JSON.", "schema": {"$ref": "#/definitions/McpEvents"}}}
+      }
+    },
+    "/Default_Corrective_Action_Advisor_7867b1": {
+      "post": {
+        "operationId": "ActionMcp",
+        "summary": "Call Corrective Action Advisor MCP",
+        "parameters": [{"name": "body", "in": "body", "required": true, "schema": {"$ref": "#/definitions/McpRequest"}}],
+        "responses": {"200": {"description": "Bounded MCP event stream wrapped as JSON.", "schema": {"$ref": "#/definitions/McpEvents"}}}
+      }
+    }
+  },
+  "definitions": {
+    "McpRequest": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": {"type": "string", "enum": ["2.0"]},
+        "id": {"type": "string"},
+        "method": {"type": "string", "enum": ["initialize", "tools/list", "tools/call"]},
+        "params": {"type": "object", "additionalProperties": true}
+      }
+    },
+    "McpEvents": {
+      "type": "object",
+      "required": ["events"],
+      "properties": {"events": {"type": "string", "maxLength": 524288}}
+    }
+  }
+}

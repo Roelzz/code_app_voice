@@ -1,0 +1,36 @@
+{
+  "properties": {
+    "connectionParameters": {
+      "token": {
+        "type": "oauthSetting",
+        "oAuthSettings": {
+          "identityProvider": "aad",
+          "clientId": "c728a6e3-0558-432d-aafa-74324ed47c5e",
+          "scopes": ["https://api.powerplatform.com/copilotstudio-mcp/MCS.InvokeAsMCP"],
+          "redirectMode": "GlobalPerConnector",
+          "redirectUrl": "https://global.consent.azure-apim.net/redirect/new-5fdfmea-20specialist-20mcp-5fcb638419537c7c20",
+          "properties": {
+            "IsFirstParty": "False",
+            "AzureActiveDirectoryResourceId": "https://api.powerplatform.com/copilotstudio-mcp",
+            "IsOnbehalfofLoginSupported": true
+          },
+          "customParameters": {
+            "loginUri": {"value": "https://login.windows.net"},
+            "tenantId": {"value": "efb073bb-283b-4757-a252-22af963721bc"},
+            "resourceUri": {"value": "https://api.powerplatform.com/copilotstudio-mcp"},
+            "enableOnbehalfOfLogin": {"value": "false"}
+          }
+        }
+      },
+      "token:TenantId": {
+        "type": "string",
+        "metadata": {"sourceType": "AzureActiveDirectoryTenant"},
+        "uiDefinition": {"constraints": {"required": "false", "hidden": "true"}}
+      }
+    },
+    "iconBrandColor": "#007ee5",
+    "capabilities": [],
+    "scriptOperations": ["FailureModeMcp", "RiskMcp", "ActionMcp"],
+    "policyTemplateInstances": []
+  }
+}
