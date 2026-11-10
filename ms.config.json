@@ -28,6 +28,15 @@
         "new_5fdfmea_20realtime_20voice_20broker_5fcb638419537c7c20"
       ],
       "dataSets": {}
+    },
+    "e0b4b475-d32b-4e29-807c-5cb99abf91f4": {
+      "id": "/providers/Microsoft.PowerApps/apis/shared_microsoftcopilotstudio",
+      "displayName": "Microsoft Copilot Studio",
+      "dataSources": [
+        "microsoftcopilotstudio"
+      ],
+      "authenticationType": "oauthDefault",
+      "dataSets": {}
     }
   }
 }

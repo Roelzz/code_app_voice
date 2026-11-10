@@ -9,9 +9,9 @@ import type { RealtimeVoiceActivity, RealtimeVoiceStatus } from "@/hooks/use-rea
 const ACTIVITY: Record<RealtimeVoiceActivity, { title: string; detail: string }> = {
   listening: { title: "Listening", detail: "Ask a question about the current workshop focus." },
   hearing: { title: "Hearing you", detail: "Finish your question naturally. No need to press anything." },
-  processing: { title: "Processing your question", detail: "Preparing your question for Microsoft 365 Copilot." },
-  consulting: { title: "Consulting Copilot", detail: "Work IQ is answering. The host allows up to 30 seconds." },
-  speaking: { title: "Voice playback active", detail: "Azure Realtime is playing speech. Work IQ supplies the answers." },
+  processing: { title: "Processing your question", detail: "Preparing your question for the selected helper." },
+  consulting: { title: "Consulting helper", detail: "The selected helper is answering. The app waits up to 30 seconds." },
+  speaking: { title: "Voice playback active", detail: "Azure Realtime is playing speech from the selected helper's answer." },
 };
 
 interface VoiceConsoleProps {
@@ -23,9 +23,10 @@ interface VoiceConsoleProps {
   disabled: boolean;
   onStart: () => void;
   onStop: () => void;
+  helperName?: string;
 }
 
-export function VoiceConsole({ status, activity, error, focus, step, disabled, onStart, onStop }: VoiceConsoleProps) {
+export function VoiceConsole({ status, activity, error, focus, step, disabled, onStart, onStop, helperName = "Microsoft 365 Copilot" }: VoiceConsoleProps) {
   const [open, setOpen] = useState(false);
   const active = status !== "idle";
   const state = status === "idle" ? (error ? "error" : "idle") : status === "connecting" ? "connecting" : activity;
@@ -53,6 +54,7 @@ export function VoiceConsole({ status, activity, error, focus, step, disabled, o
           <p className="font-mono text-[0.65rem] font-semibold tracking-[0.2em] text-primary">WORKSHOP / VOICE CONSOLE</p>
           <DialogTitle className="text-xl">Talk to Copilot</DialogTitle>
           <DialogDescription>Think out loud. Keep the team in control.</DialogDescription>
+          <p className="text-xs font-medium text-primary">Answer source: {helperName}</p>
         </DialogHeader>
 
         <div className="px-6 pt-5">
@@ -94,7 +96,7 @@ export function VoiceConsole({ status, activity, error, focus, step, disabled, o
           </Button>
           <div className="flex items-start gap-2 text-xs text-muted-foreground">
             <ShieldCheck aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-            <p>Work IQ provides the answers. Azure Realtime provides the voice. Closing this console stops the microphone. Nothing changes in the DFMEA automatically.</p>
+            <p>{helperName} provides the answers. Azure Realtime provides the voice. Closing this console stops the microphone. Nothing changes in the DFMEA automatically.</p>
           </div>
         </div>
       </DialogContent>

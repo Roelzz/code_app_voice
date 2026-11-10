@@ -22,7 +22,7 @@ const VOICE_TOOL = {
   type: "function",
   name: "ask_copilot",
   description:
-    "Ask Microsoft 365 Copilot through Work IQ. Use this for every DFMEA question; do not answer from model knowledge.",
+    "Ask the selected DFMEA helper. Use this for every question; do not answer from model knowledge.",
   parameters: {
     type: "object",
     properties: {
@@ -34,7 +34,7 @@ const VOICE_TOOL = {
 } as const;
 
 const SESSION_INSTRUCTIONS =
-  "You are the voice interface for a DFMEA workshop. Microsoft 365 Copilot via Work IQ is the only source of answers. For every user question, call ask_copilot and wait for its result. Do not answer from your own knowledge, invent details, or claim to have searched files. Briefly acknowledge while waiting. After the tool returns, speak a concise version of its answer. If the tool reports an error, tell the user Copilot could not answer and ask them to try again.";
+  "You are the voice interface for a DFMEA workshop. The selected helper is the only source of answers. For every user question, call ask_copilot and wait for its result. Do not answer from your own knowledge, invent details, or claim to have searched files. Briefly acknowledge while waiting. After the tool returns, speak a concise version of its answer. If the tool reports an error, tell the user the helper could not answer and ask them to try again.";
 
 const SETUP_TIMEOUT_MS = 30_000;
 const CALLS_URL = "https://dfmea-voice-fy27.openai.azure.com/openai/v1/realtime/calls";
@@ -76,10 +76,12 @@ export function useRealtimeVoice({
   requestToken,
   askCopilot,
   onError,
+  helperName = "Microsoft 365 Copilot",
 }: {
   requestToken: () => Promise<RealtimeVoiceToken>;
   askCopilot: (question: string) => Promise<string>;
   onError: (message: string) => void;
+  helperName?: string;
 }) {
   const [status, setStatus] = useState<RealtimeVoiceStatus>("idle");
   const [activity, setActivity] = useState<RealtimeVoiceActivity>("listening");
@@ -128,6 +130,7 @@ export function useRealtimeVoice({
 
   const start = useCallback(async () => {
     if (runRef.current) return;
+    const askQuestion = askCopilotRef.current;
     const run: VoiceRun = {
       controller: new AbortController(), peer: null, channel: null, stream: null,
       audio: null, timer: null, toolTimer: null, releaseAudio: null,
@@ -198,7 +201,7 @@ export function useRealtimeVoice({
             type: "session.update",
             session: {
               type: "realtime",
-              instructions: SESSION_INSTRUCTIONS,
+              instructions: `${SESSION_INSTRUCTIONS} Selected helper: ${helperName}.`,
               tools: [VOICE_TOOL],
               tool_choice: "required",
             },
@@ -277,23 +280,23 @@ export function useRealtimeVoice({
         if (calls.has(callId)) return;
         calls.add(callId);
         if (pending) {
-          fail("Copilot is already answering a voice question. Start voice again after the request finishes.");
+          fail("The helper is already answering a voice question. Start voice again after the request finishes.");
           return;
         }
         const request: VoiceToolCall = { callId, responseId: event.response_id, output: null };
         pending = request;
         setActivity("consulting");
         run.toolTimer = setTimeout(() => {
-          fail("Copilot did not answer within the 30-second host limit. Try a shorter question.");
+          fail("The helper did not answer within the app's 30-second limit. Try a shorter question.");
         }, 30_000);
         void (async () => {
           let output: string;
           try {
             if (!question) throw new Error("The voice model did not provide a valid question.");
-            output = await askCopilotRef.current(question);
+            output = await askQuestion(question);
           } catch {
-            output = "Copilot could not answer this request. Tell the user to try again; do not make up an answer.";
-            if (current()) onErrorRef.current("Copilot could not answer the voice question within the service limit. Try again.");
+            output = "The selected helper could not answer this request. Tell the user to try again; do not make up an answer.";
+            if (current()) onErrorRef.current("The selected helper could not answer the voice question. Check the connection or try again.");
           }
           if (!current()) return;
           request.output = output;
@@ -348,7 +351,7 @@ export function useRealtimeVoice({
             : "Realtime voice couldn't connect. Check the app network policy and try again.";
       fail(message);
     }
-  }, [requestToken, stop]);
+  }, [requestToken, stop, helperName]);
 
   useEffect(() => cleanup, [cleanup]);
 

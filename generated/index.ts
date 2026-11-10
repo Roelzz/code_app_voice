@@ -5,8 +5,10 @@
 
 // Models
 export * as DFMEARealtimeVoiceBrokerModel from './models/DFMEARealtimeVoiceBrokerModel';
+export * as MicrosoftCopilotStudioModel from './models/MicrosoftCopilotStudioModel';
 export * as WorkIQCopilotMCPModel from './models/WorkIQCopilotMCPModel';
 
 // Services
 export * from './services/DFMEARealtimeVoiceBrokerService';
+export * from './services/MicrosoftCopilotStudioService';
 export * from './services/WorkIQCopilotMCPService';

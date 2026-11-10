@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Check,
   Lightbulb,
@@ -23,6 +23,8 @@ import { Switch } from "@/components/ui/switch";
 import { ConnectorErrorState, ErrorState } from "@/components/states";
 import { DictationButton } from "@/components/dictation-button";
 import { VoiceConsole } from "@/components/voice-console";
+import { HelperChooser } from "@/components/helper-chooser";
+import { getHelper, HelperError, HelperSession, helperErrorMessage, type HelperId } from "@/connectors/dfmea-helpers";
 import { speechOutputSupported, useSpeechReader } from "@/hooks/use-voice";
 import { useRealtimeVoice, type RealtimeVoiceToken } from "@/hooks/use-realtime-voice";
 import {
@@ -31,8 +33,6 @@ import {
   WorkIqResponseError,
   WorkIqTimeoutError,
   WorkIqToolError,
-  callWorkIqCopilotChatItems,
-  callWorkIqCopilotChatText,
   type WorkIqResponseSchema,
 } from "@/connectors/workiq-copilot-chat";
 import { isConnectorPolicyBlock } from "@/lib/connector-error";
@@ -109,7 +109,7 @@ interface AnswerLine {
   bullet: boolean;
 }
 
-type AiResult = { kind: "items"; items: AiItem[] } | { kind: "text"; lines: AnswerLine[] };
+type AiResult = { kind: "items"; items: AiItem[] } | { kind: "text"; lines: AnswerLine[]; notice?: string };
 
 /** Copilot's answer as readable lines: links reduced to their labels, markup and citation markers removed. */
 function toAnswerLines(text: string): AnswerLine[] {
@@ -158,6 +158,7 @@ function buildPrompt(
   chain: { mode: FailureMode; cause: FailureCause } | null,
   question: string,
   searchFiles: boolean,
+  specialist = false,
 ): string {
   const { project } = data;
   const step = STEPS.find((s) => s.id === project.currentStep) ?? STEPS[0];
@@ -169,8 +170,9 @@ function buildPrompt(
     .map((f) => f.description)
     .join("; ");
   const modes = data.failureModes.filter((m) => scope.has(m.elementId));
-  const source = searchFiles ? SEARCH_FILES : NO_SEARCH;
-  const preamble = `You are a DFMEA facilitator (AIAG-VDA method, 1-10 rating scales) for a design team at a health-technology company. Product: ${project.product}. Workshop step ${step.number}: ${step.title}.`;
+  const noSearch = specialist ? "Use your configured knowledge and tools as appropriate; never invent evidence." : NO_SEARCH;
+  const source = specialist ? noSearch : searchFiles ? SEARCH_FILES : NO_SEARCH;
+  const preamble = `${specialist ? "Help the team within your configured specialist role." : "You are a DFMEA facilitator (AIAG-VDA method, 1-10 rating scales) for a design team at a health-technology company."} Product: ${project.product}. Workshop step ${step.number}: ${step.title}.`;
   const focus = `Focus element: ${path.map((e) => e.name).join(" > ")} (${element?.level ?? "element"}). Functions: ${functions || "none recorded"}.`;
   const selected = chain ? describeChain(chain.mode, chain.cause) : "";
 
@@ -178,7 +180,7 @@ function buildPrompt(
     case "questions": {
       const roles = project.participants.map((p) => p.role).join(", ");
       const captured = modes.slice(0, 8).map((m) => m.description).join("; ");
-      return `${preamble} ${focus} Team roles: ${roles}. Failure modes captured: ${captured || "none yet"}. Give 3 numbered questions the facilitator should ask the team now for this step, each followed by its purpose in one short sentence. ${NO_SEARCH} ${PLAIN} Keep the whole answer under 120 words.`;
+      return `${preamble} ${focus} Team roles: ${roles}. Failure modes captured: ${captured || "none yet"}. Give 3 numbered questions the facilitator should ask the team now for this step, each followed by its purpose in one short sentence. ${noSearch} ${PLAIN} Keep the whole answer under 120 words.`;
     }
     case "failureModes": {
       const captured = modes.slice(0, 10).map((m) => m.description).join("; ");
@@ -212,7 +214,7 @@ function buildPrompt(
         .filter((a) => a.status !== "Done")
         .slice(0, SUMMARY_CHAIN_LIMIT)
         .map((a) => `${a.description} (${a.owner || "unassigned"}, ${a.status})`);
-      return `${preamble} Summarize this DFMEA for the workshop minutes in up to 5 bullet points covering the highest-risk chains, unrated chains, open actions and next steps. Chains by RPN: ${chains.join("; ")}.${omitted ? ` ${omitted} lower-ranked chains omitted.` : ""} Unrated chains: ${unrated}. Open actions: ${open.join("; ") || "none"}. ${NO_SEARCH} ${PLAIN} Keep the whole answer under 150 words.`;
+      return `${preamble} Summarize this DFMEA for the workshop minutes in up to 5 bullet points covering the highest-risk chains, unrated chains, open actions and next steps. Chains by RPN: ${chains.join("; ")}.${omitted ? ` ${omitted} lower-ranked chains omitted.` : ""} Unrated chains: ${unrated}. Open actions: ${open.join("; ") || "none"}. ${noSearch} ${PLAIN} Keep the whole answer under 150 words.`;
     }
     case "ask":
       return `${preamble} ${focus} ${selected ? `Selected failure chain: ${selected}.` : ""} Question from the team: ${question} Answer in up to 5 short bullet points. ${source} ${PLAIN} Keep the whole answer under 150 words.`;
@@ -234,6 +236,9 @@ function speechParts(title: string, result: AiResult): string[] {
 
 /** User-safe explanation of a failed facilitator request; never shows upstream text. */
 function describeAiError(error: unknown): { title: string; description: string; code: string } {
+  if (error instanceof HelperError) {
+    return { title: "The selected helper couldn't complete this request", description: error.message, code: error.code };
+  }
   if (error instanceof WorkIqTimeoutError) {
     return {
       title: `Copilot needed more than ${WORKIQ_HOST_TIMEOUT_MS / 1000} seconds`,
@@ -282,18 +287,20 @@ function describeAiError(error: unknown): { title: string; description: string; 
   return { title: "Couldn't reach Copilot", description: "Try again in a moment.", code: "unexpected" };
 }
 
-async function answerText(prompt: string): Promise<AiResult> {
-  const lines = toAnswerLines(await callWorkIqCopilotChatText(prompt));
+function readableAnswer(text: string, notice?: string): AiResult {
+  const lines = toAnswerLines(text);
   if (lines.length === 0) {
     throw new WorkIqResponseError("Copilot's answer had no readable text.", "assistant-text");
   }
-  return { kind: "text", lines };
+  return { kind: "text", lines, notice };
 }
 
-async function runMove(request: AiRequest): Promise<AiResult> {
+async function runMove(request: AiRequest, session: HelperSession): Promise<AiResult> {
   switch (request.move) {
     case "failureModes": {
-      const items = await callWorkIqCopilotChatItems(request.prompt, SCHEMAS.failureModes);
+      const result = await session.items(request.prompt, SCHEMAS.failureModes);
+      if (result.kind === "clarification") return readableAnswer(result.text, "The helper replied with text or a clarification, not validated suggestions. Nothing here can be applied automatically.");
+      const items = result.items;
       return {
         kind: "items",
         items: items.map((i) => ({
@@ -308,7 +315,9 @@ async function runMove(request: AiRequest): Promise<AiResult> {
       };
     }
     case "actions": {
-      const items = await callWorkIqCopilotChatItems(request.prompt, SCHEMAS.actions);
+      const result = await session.items(request.prompt, SCHEMAS.actions);
+      if (result.kind === "clarification") return readableAnswer(result.text, "The helper replied with text or a clarification, not validated suggestions. Nothing here can be applied automatically.");
+      const items = result.items;
       return {
         kind: "items",
         items: items.map((i) => {
@@ -326,19 +335,11 @@ async function runMove(request: AiRequest): Promise<AiResult> {
     case "challenge":
     case "summary":
     case "ask":
-      return answerText(request.prompt);
+      return readableAnswer(await session.text(request.prompt));
   }
 }
 
-export function AiFacilitator({
-  data,
-  elementId,
-  causeId,
-  onAddFailureChain,
-  onAddAction,
-  requestRealtimeToken,
-  className,
-}: {
+interface AiFacilitatorProps {
   data: DfmeaDataset;
   elementId: string;
   causeId: string | null;
@@ -349,7 +350,36 @@ export function AiFacilitator({
   onAddAction: (causeId: string, suggestion: { description: string; kind: ActionKind }) => void;
   requestRealtimeToken?: () => Promise<RealtimeVoiceToken>;
   className?: string;
-}) {
+}
+
+export function AiFacilitator(props: AiFacilitatorProps) {
+  const [helperId, setHelperId] = useState<HelperId>("workiq");
+  const [conversation, setConversation] = useState(0);
+  const [session] = useState(() => new HelperSession());
+  function select(id: HelperId) {
+    session.select(id);
+    setHelperId(id);
+    setConversation((value) => value + 1);
+  }
+  useEffect(() => () => session.select("workiq"), [session]);
+  return <FacilitatorPanel key={conversation} {...props} helperId={helperId} conversation={conversation} session={session} onSelect={select} />;
+}
+
+function FacilitatorPanel({
+  data,
+  elementId,
+  causeId,
+  onAddFailureChain,
+  onAddAction,
+  requestRealtimeToken,
+  className,
+  helperId,
+  conversation,
+  session,
+  onSelect,
+}: AiFacilitatorProps & { helperId: HelperId; conversation: number; session: HelperSession; onSelect: (id: HelperId) => void }) {
+  const helper = getHelper(helperId);
+  const specialist = helperId !== "workiq";
   const [request, setRequest] = useState<AiRequest | null>(null);
   const [seq, setSeq] = useState(0);
   const [question, setQuestion] = useState("");
@@ -368,18 +398,32 @@ export function AiFacilitator({
   const mode = cause ? data.failureModes.find((m) => m.id === cause.failureModeId) : undefined;
   const chain = cause && mode ? { mode, cause } : null;
   const step = STEPS.find((s) => s.id === data.project.currentStep) ?? STEPS[0];
+  const voiceQuestion = useMutation({
+    mutationFn: (text: string) => session.text(buildPrompt(data, "ask", elementId, chain, text, searchFiles, specialist)),
+    retry: false,
+    gcTime: 0,
+  });
   const realtimeVoice = useRealtimeVoice({
+    helperName: helper.name,
     requestToken:
       requestRealtimeToken ??
       (() => Promise.reject(new WorkIqConnectorError("Realtime voice connector is not configured.", undefined, undefined))),
-    askCopilot: (text) =>
-      callWorkIqCopilotChatText(buildPrompt(data, "ask", elementId, chain, text, searchFiles)),
+    askCopilot: async (text) => {
+      try {
+        return await voiceQuestion.mutateAsync(text);
+      } catch (error) {
+        setVoiceMessage(helperErrorMessage(error));
+        throw error;
+      } finally {
+        voiceQuestion.reset();
+      }
+    },
     onError: setVoiceMessage,
   });
 
   const query = useQuery({
-    queryKey: ["ai-facilitator", request?.seq, request?.move, request?.prompt],
-    queryFn: () => runMove(request as AiRequest),
+    queryKey: ["ai-facilitator", helperId, conversation, request?.seq, request?.move, request?.prompt],
+    queryFn: () => runMove(request as AiRequest, session),
     enabled: request !== null,
     staleTime: 5 * 60 * 1000,
     retry: false,
@@ -402,7 +446,7 @@ export function AiFacilitator({
   }, [realtimeVoice.status, readAloud, request, busy, query.isSuccess, query.data, query.dataUpdatedAt, speak]);
 
   function start(move: MoveId, text = "") {
-    if (busy) return;
+    if (busy || voiceQuestion.isPending) return;
     realtimeVoice.stop();
     stopSpeaking();
     const next = seq + 1;
@@ -416,7 +460,7 @@ export function AiFacilitator({
     setRequest({
       seq: next,
       move,
-      prompt: buildPrompt(data, move, elementId, chain, text, searchFiles),
+      prompt: buildPrompt(data, move, elementId, chain, text, searchFiles, specialist),
       scopeLabel,
       elementId,
       causeId: chain?.cause.id ?? null,
@@ -431,7 +475,7 @@ export function AiFacilitator({
   }
 
   function apply(item: AiItem, key: string) {
-    if (!request || !item.apply) return;
+    if (!request || !item.apply || busy) return;
     if (item.apply.kind === "failureChain") {
       onAddFailureChain(request.elementId, item.apply);
     } else if (request.causeId) {
@@ -472,10 +516,20 @@ export function AiFacilitator({
         </dl>
       </div>
 
+      <HelperChooser selected={helperId} disabled={busy} restoreFocus={conversation > 0} onSelect={(id) => {
+        realtimeVoice.stop();
+        stopSpeaking();
+        onSelect(id);
+      }} onReset={() => {
+        realtimeVoice.stop();
+        stopSpeaking();
+        onSelect(helperId);
+      }} />
+
       <div className="grid grid-cols-2 gap-2" role="group" aria-label="Facilitator moves">
         {MOVES.map((move) => {
           const Icon = move.icon;
-          const disabled = busy || (move.needsChain && !chain);
+          const disabled = busy || voiceQuestion.isPending || (move.needsChain && !chain);
           return (
             <Button
               key={move.id}
@@ -509,18 +563,18 @@ export function AiFacilitator({
           autoComplete="off"
         />
         <DictationButton label="a question for the facilitator" value={question} onChange={setQuestion} disabled={busy} />
-        <Button type="submit" size="icon" disabled={busy || !question.trim()} aria-label="Ask the facilitator">
+        <Button type="submit" size="icon" disabled={busy || voiceQuestion.isPending || !question.trim()} aria-label="Ask the facilitator">
           <SendHorizontal aria-hidden="true" />
         </Button>
       </form>
 
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-        <div className="flex items-center gap-2">
+        {!specialist && <div className="flex items-center gap-2">
           <Switch id="ai-search-files" checked={searchFiles} onCheckedChange={setSearchFiles} disabled={busy} />
           <Label htmlFor="ai-search-files" className="text-xs font-normal">
             Use my Microsoft 365 files (slower)
           </Label>
-        </div>
+        </div>}
         {canSpeak && (
           <div className="flex items-center gap-2">
             <Switch
@@ -539,6 +593,7 @@ export function AiFacilitator({
         )}
         {requestRealtimeToken && (
           <VoiceConsole
+            helperName={helper.name}
             status={realtimeVoice.status}
             activity={realtimeVoice.activity}
             error={realtimeVoice.error || voiceMessage}
@@ -565,8 +620,8 @@ export function AiFacilitator({
         <p role="status" aria-live="polite" className="text-xs text-muted-foreground">
           {busy
             ? slow
-              ? "Still working with Copilot. The app waits up to 30 seconds."
-              : "Asking Copilot. This can take up to 30 seconds."
+              ? `Still working with ${helper.name}. The app waits up to 30 seconds.`
+              : `Asking ${helper.name}. This can take up to 30 seconds.`
             : ""}
         </p>
 
@@ -579,6 +634,7 @@ export function AiFacilitator({
           <>
             <div className="flex items-baseline justify-between gap-2">
               <h3 className="min-w-0 text-sm font-semibold">
+                <span className="block text-xs font-normal text-muted-foreground">{helper.name}</span>
                 {RESULT_TITLES[request.move]}
                 {request.scopeLabel && (
                   <span className="block truncate text-xs font-normal text-muted-foreground">
@@ -623,7 +679,7 @@ export function AiFacilitator({
               </div>
             ) : query.isError ? (
               isConnectorPolicyBlock(query.error) ? (
-                <ConnectorErrorState error={query.error} connector="Microsoft 365 Copilot" className="py-6" />
+                <ConnectorErrorState error={query.error} connector={helper.name} className="py-6" />
               ) : (
                 (() => {
                   const info = describeAiError(query.error);
@@ -647,6 +703,7 @@ export function AiFacilitator({
               )
             ) : query.data?.kind === "text" ? (
               <div className="space-y-1.5 rounded-md border bg-background p-3 text-sm leading-relaxed">
+                {query.data.notice && <p role="status" className="rounded border bg-muted p-2 text-xs">{query.data.notice}</p>}
                 {query.data.lines.map((line, index) => (
                   <p
                     key={index}
@@ -657,7 +714,7 @@ export function AiFacilitator({
                 ))}
               </div>
             ) : query.data && query.data.items.length === 0 ? (
-              <p className="rounded-md border px-3 py-4 text-sm">Copilot returned no suggestions.</p>
+              <p className="rounded-md border px-3 py-4 text-sm">{helper.name} returned no suggestions.</p>
             ) : (
               <ol className="space-y-2">
                 {(query.data?.items ?? []).map((item, index) => {

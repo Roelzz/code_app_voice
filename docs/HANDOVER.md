@@ -54,6 +54,15 @@ Prepared on 10 November 2026 from the App Builder source of the app. GitHub Copi
 
 ## 2. Backlog
 
+**Selectable-helper integration**
+- User approved a compact chooser with Microsoft 365 Copilot as default plus Failure Mode Identifier (`2a170dfe-4ffb-44d1-b765-4638a5c79ab8`), Failure Risk Prioritizer (`a7f90445-d998-4f78-9007-4e887342bd0e`) and Corrective Action Advisor (`fa1b483f-9995-4552-91f9-d95c823617bd`).
+- Supported PAC discovery found all three Published / Active / Provisioned. Read-only PAC clones verified their exact schema names and Integrated authentication; configuration/behavior inspection found instruction/skill guidance, not external connector actions. No agent content or publication was changed.
+- The Managed Runtime catalog allows `shared_microsoftcopilotstudio` with SSO and `ExecuteCopilotAsyncV2`. Supported `ms app add data-source --connector shared_microsoftcopilotstudio --as action --use-sso` generated the binding without manual client/config edits. No governance or infrastructure changes.
+- Selection applies to all typed moves and realtime voice. Switching/reset ends voice, invalidates late results, clears output and starts a separate in-memory conversation. No automatic fallback or DFMEA mutation. Work IQ file search is not imposed on Studio agents.
+- Specialist prose/clarifications remain visible but non-applicable; complete structured rows retain human-reviewed Add behavior. The generated Studio operation declares void, so actual data is validated at runtime rather than changing the generated signature.
+- Local implementation checks are not hosted invocation proof. Per-agent real generated-connector responses, host timing and new selected-helper audio/Stop acceptance remain to be established before claiming end-to-end success. The prior deployed voice console `12c6ed88787190bceb77602cde62d5908262f4d0` remains the known-good rollback reference.
+- Local evidence: all 35 Node tests, TypeScript, lint (only the two known template warnings), production build check and whitespace check pass. Chrome inspection covered desktop/light, 390px mobile/dark/reduced-motion, and 320×568 forced-colors. The chooser scrolls within the viewport and keyboard selection returns focus to the new selected-helper trigger. These are local-only observations, not live specialist/audio evidence.
+
 Requested but not built yet:
 1. **Planning step** — edit scope, team and roles, and rating scales.
 2. **Structure and functions** — add, rename, move and delete elements; add and edit functions with requirement references.

@@ -99,11 +99,18 @@ test("opening does not start the mic; Start is explicit and closing stops then r
 test("connected console exposes actual activity and Escape ends the session", async () => {
   await click("Talk to Copilot");
   await render({ status: "connected", activity: "consulting" });
-  assert.match(document.body.textContent, /Consulting Copilot/);
+  assert.match(document.body.textContent, /Consulting helper/);
   assert.equal(document.querySelector("[data-voice-state]").getAttribute("data-voice-state"), "consulting");
   await act(async () => document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
   assert.equal(stop.mock.callCount(), 1);
   assert.equal(document.querySelector('[role="dialog"]'), null);
+});
+
+test("voice console names the selected specialist instead of claiming Work IQ", async () => {
+  await render({ helperName: "Failure Risk Prioritizer" });
+  await click("Talk to Copilot");
+  assert.match(document.body.textContent, /Answer source: Failure Risk Prioritizer/);
+  assert.doesNotMatch(document.querySelector('[role="dialog"]').textContent, /Work IQ|Microsoft 365 Copilot/);
 });
 
 test("safe errors are visible in the dialog and busy state prevents starting", async () => {

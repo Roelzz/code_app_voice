@@ -47,6 +47,8 @@ let fetchSignal;
 let recognition;
 let window;
 let saved;
+let helperName;
+let renderHarness;
 
 class Peer {
   constructor() {
@@ -80,6 +82,7 @@ beforeEach(async () => {
   streams = [];
   errors = [];
   audio = [];
+  helperName = "Microsoft 365 Copilot";
   ask = mock.fn(async () => "Work IQ answer");
   requestToken = mock.fn(async () => token);
   getMicrophone = mock.fn(async () => stream());
@@ -112,6 +115,7 @@ beforeEach(async () => {
   };
   function Harness() {
     current = useRealtimeVoice({
+      helperName,
       requestToken: () => requestToken(),
       askCopilot: (question) => ask(question),
       onError: (message) => errors.push(message),
@@ -121,7 +125,23 @@ beforeEach(async () => {
     return null;
   }
   root = createRoot(document.createElement("div"));
+  renderHarness = () => root.render(React.createElement(Harness));
   await act(async () => root.render(React.createElement(Harness)));
+});
+
+test("voice session names its selected specialist and returns that helper's result exactly once", async () => {
+  helperName = "Failure Risk Prioritizer";
+  ask = mock.fn(async () => "Specialist risk assessment");
+  await act(async () => renderHarness());
+  const channel = await connect();
+  assert.match(channel.sent[0].session.instructions, /Selected helper: Failure Risk Prioritizer/);
+  assert.doesNotMatch(channel.sent[0].session.instructions, /Work IQ is the only/);
+  await emit(channel, questionEvent());
+  await emit(channel, questionEvent());
+  await emit(channel, { type: "response.done", response: { id: "response-one" } });
+  assert.equal(ask.mock.callCount(), 1);
+  assert.equal(channel.sent[1].item.output, "Specialist risk assessment");
+  assert.equal(channel.sent[2].response.tool_choice, "none");
 });
 
 afterEach(async () => {
@@ -330,7 +350,7 @@ test("Work IQ timeout closes voice and ignores a late result", async () => {
   const channel = await connect();
   await emit(channel, questionEvent());
   await act(async () => mock.timers.tick(30_000));
-  assert.match(errors[0], /30-second host limit/);
+  assert.match(errors[0], /app's 30-second limit/);
   assert.equal(current.status, "idle");
   await act(async () => reply.resolve("late answer"));
   assert.equal(channel.sent.length, 1);
