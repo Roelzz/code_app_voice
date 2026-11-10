@@ -129,7 +129,7 @@ The initial dataset is a fictional wearable vital-signs patch. State is in brows
 
 ## Choose a specialist helper
 
-> **Preview blocked for these three agents:** after the user published them, the hosted connector returned: “This action doesn't support agents built with the GitHub Copilot harness.” The chooser/routing code is implemented and preview-built, but specialist integration is **not deployed live or working end-to-end**. The allowed connector/SSO inventory was not proof of harness compatibility. A supported publishing channel must replace this execution path without rebuilding the agents or weakening governance.
+> **Preview blocked for these three agents:** after the user published them, the hosted connector returned: “This action doesn't support agents built with the GitHub Copilot harness.” The user also confirmed **MCP client is not listed** in this environment's channel picker. The chooser/routing code is implemented and preview-built, but specialist integration is **not deployed live or working end-to-end**. The allowed connector/SSO inventory was not proof of harness compatibility. A supported publishing channel must replace this execution path without rebuilding the agents or weakening governance.
 
 Select **Selected helper · Change** in the facilitator panel to open the compact chooser. The choice applies to both the typed facilitator controls and the realtime voice console.
 
