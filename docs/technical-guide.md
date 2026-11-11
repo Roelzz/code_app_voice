@@ -71,7 +71,7 @@ The agents use the GitHub Copilot harness. The standard Microsoft Copilot Studio
 
 The app's custom connector holds OAuth configuration. Secrets belong in an approved secret store/platform configuration, never the source tree. The [API properties template](../specialist-connector/apiProperties.template.json) omits secret material.
 
-MCP has a **30-second app-side wait** covering initialization, discovery and the answer. This is the sample's limit, not a universal MCP protocol timeout. A failure clears MCP initialization/conversation state. The app does not automatically retry, and keeps its single-flight gate until the upstream operation settles.
+MCP has a **180-second app-side wait** covering initialization, discovery and the answer for typed and voice questions. This is the sample's limit, not a universal MCP protocol timeout, and does not extend connector or server timeouts. A failure clears MCP initialization/conversation state. The app does not automatically retry, and keeps its single-flight gate until the upstream operation settles.
 
 ### Agent connector with custom polling
 
@@ -125,7 +125,7 @@ The user must select Start; merely opening the dialog does not acquire the micro
 3. Waits for the helper result and the associated Realtime response completion.
 4. Sends the matching `function_call_output` and creates the speech continuation with `tool_choice: "none"` to avoid repeatedly calling the tool.
 
-Errors are spoken/reported as failures rather than replaced with another helper or transport. Work IQ keeps its **hard 30-second host limit**. Specialist requests use the selected transport's app-side limit: **30 seconds for MCP** initialization/discovery/answer, or **180 seconds for Agent connector** readiness/submission/polling. The realtime tool timer and displayed consulting limit share the session's selected wait budget; voice setup has its own unchanged 30-second deadline. Automatic query retries are disabled. App-side waits cannot extend host limits or cancel upstream execution.
+Errors are spoken/reported as failures rather than replaced with another helper or transport. Work IQ keeps its **hard 30-second host limit**. Both specialist routes have a **180-second app-side limit**: MCP initialization/discovery/answer, or Agent connector readiness/submission/polling. The realtime tool timer and displayed consulting limit share the session's selected wait budget; voice setup has its own unchanged 30-second deadline. Automatic query retries are disabled. App-side waits cannot extend host limits or cancel upstream execution.
 
 Stop works during setup. Dialog dismissal, helper/transport changes and unmount cleanup close the peer/data channel, stop microphone tracks, clear audio/timers and invalidate late work, including rejected helper calls. Only the active voice run reports sanitized helper recovery instructions to the screen and voice tool. An Agent connector voice timeout includes the new-conversation instruction if a dispatched turn remains unresolved; a pre-dispatch wait does not claim that a request was sent. Changing helper or transport requires a new explicit Start. The activity display follows real session, tool and audio events; it is not a measured audio-level visualizer.
 

@@ -117,7 +117,7 @@ test("bounded timeout holds upstream gate until settlement and invalidates hands
   service.FailureModeMcp = mock.fn(() => pending.promise);
   const request = session.text("Question");
   const rejected = assert.rejects(request, (error) => error.code === "timeout");
-  mock.timers.tick(30_001);
+  mock.timers.tick(180_001);
   await rejected;
   await assert.rejects(session.text("Too soon"), (error) => error.code === "busy");
   pending.resolve(rpcResult("old", {}));

@@ -164,7 +164,7 @@ for (const transport of ["mcp", "agentnode"]) {
     let settled = false;
     void request.then(() => { settled = true; }, () => { settled = true; });
     const rejected = assert.rejects(request, (error) => error.code === "timeout");
-    mock.timers.tick((transport === "mcp" ? 30_000 : 180_000) - 1);
+    mock.timers.tick(180_000 - 1);
     await new Promise(setImmediate);
     assert.equal(settled, false);
     mock.timers.tick(1);

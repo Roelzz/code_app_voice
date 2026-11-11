@@ -182,7 +182,7 @@ export class HelperSession {
   }
 
   get timeoutMs(): number {
-    return this.helperId !== "workiq" && this.transport === "agentnode" ? NATIVE_AGENT_TIMEOUT_MS : WORKIQ_HOST_TIMEOUT_MS;
+    return this.helperId === "workiq" ? WORKIQ_HOST_TIMEOUT_MS : NATIVE_AGENT_TIMEOUT_MS;
   }
 
   get requiresNewConversation(): boolean {
@@ -228,7 +228,7 @@ export class HelperSession {
         }
         reject(new HelperError("timeout", native
           ? `The native agent did not complete within three minutes. ${requiresNewConversation ? NATIVE_RESET_MESSAGE : "No native request was sent."}`
-          : "The helper did not answer within the app's 30-second limit. The upstream request may still be finishing; wait before trying again.",
+          : `The helper did not answer within the app's ${wait / 1000}-second limit. The upstream request may still be finishing; wait before trying again.`,
         undefined, requiresNewConversation));
       }, wait);
     });

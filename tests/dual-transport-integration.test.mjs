@@ -250,7 +250,7 @@ test("transport controls are specialist-only, default to MCP and route typed and
     if (index === 0) {
       assert.equal(button("MCP").getAttribute("aria-checked"), "true");
       assert.equal(button("Agent connector").getAttribute("aria-checked"), "false");
-      assert.match(document.body.textContent, /Wait limit: 30 seconds/);
+      assert.match(document.body.textContent, /Wait limit: three minutes/);
       await click("Agent connector");
     }
     assert.equal(document.querySelector("#ai-search-files"), null);
@@ -306,11 +306,11 @@ test("changing either transport stops voice/read-aloud and remounts output, read
   assert.equal(toolCalls(mcp.RiskMcp).at(-1).params.arguments.conversationId, undefined);
 });
 
-test("actual facilitator wires route-specific voice consulting limits and delivers a native answer after 30 seconds", async () => {
+test("actual facilitator wires route-specific voice consulting limits and delivers specialist answers after 30 seconds", async () => {
   const { peers, microphoneStop } = installRealtimeBoundaries();
   for (const route of [
     { helper: "Microsoft 365 Copilot", transport: null, seconds: 30, kind: "workiq" },
-    { helper: "Failure Risk Prioritizer", transport: "MCP", seconds: 30, kind: "mcp" },
+    { helper: "Failure Risk Prioritizer", transport: "MCP", seconds: 180, kind: "mcp" },
     { helper: "Failure Risk Prioritizer", transport: "Agent connector", seconds: 180, kind: "native" },
     { helper: "Microsoft 365 Copilot", transport: null, seconds: 30, kind: "workiq" },
   ]) {
@@ -332,7 +332,7 @@ test("actual facilitator wires route-specific voice consulting limits and delive
       assert.match(dialog.textContent, new RegExp(`The app waits up to ${route.seconds} seconds\\.`));
       assert.equal(dialog.querySelector("[data-voice-state]").getAttribute("data-voice-state"), "consulting");
       await act(async () => {
-        mock.timers.tick(route.kind === "native" ? 45_000 : 15_000);
+        mock.timers.tick(route.kind === "workiq" ? 15_000 : 45_000);
         await new Promise(setImmediate);
       });
       assert.equal(channel.readyState, "open", `${route.kind} uses the helper deadline, not a hardcoded voice limit`);
@@ -597,7 +597,7 @@ for (const transport of ["mcp", "agentnode"]) {
         await act(async () => button(transport === "mcp" ? "Agent connector" : "MCP").click());
         assert.equal(button(current).getAttribute("aria-checked"), "true");
         if (channel === "typed") {
-          assert.match(document.body.textContent, transport === "mcp" ? /This can take up to 30 seconds/ : /This can take up to three minutes/);
+          assert.match(document.body.textContent, /This can take up to three minutes/);
         }
       } finally {
         await act(async () => {
@@ -628,7 +628,14 @@ test("late MCP settlement reactively unlocks transport switching after the timeo
       await new Promise(setImmediate);
       mock.timers.tick(0);
     });
-    assert.match(document.body.textContent, /30-second/);
+    assert.equal(document.querySelector('[aria-label="Facilitator output"]').getAttribute("aria-busy"), "true",
+      "MCP must keep waiting beyond the old 30-second limit");
+    await act(async () => {
+      mock.timers.tick(150_000);
+      await new Promise(setImmediate);
+      mock.timers.tick(0);
+    });
+    assert.match(document.body.textContent, /180-second/);
     assert.equal(document.querySelector('[aria-label="Facilitator output"]').getAttribute("aria-busy"), "false");
     assert.equal(button("MCP").disabled, true, "The timed-out upstream operation still owns the gate");
     assert.equal(button("Agent connector").disabled, true);

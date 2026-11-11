@@ -213,7 +213,7 @@ test("real native helper answer after 30 seconds still reaches voice before the 
 
 for (const route of [
   { name: "Work IQ", helper: "workiq", transport: "agentnode", timeout: 30_000 },
-  { name: "MCP specialist", helper: "risk", transport: "mcp", timeout: 30_000 },
+  { name: "MCP specialist", helper: "risk", transport: "mcp", timeout: 180_000 },
   { name: "native specialist", helper: "risk", transport: "agentnode", timeout: 180_000 },
 ]) {
   test(`real ${route.name} voice times out at ${route.timeout / 1000} seconds and keeps its upstream gate until settlement`, async () => {
