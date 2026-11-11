@@ -124,7 +124,7 @@ These are integration prerequisites, not services supplied by this repository. P
 
 | Area | Prerequisite |
 |---|---|
-| Managed Apps | An eligible tenant, a **Managed Environment** for deployment, app sharing/environment access, and an eligible runtime license or Copilot Credits. The Managed Runtime SDK is documented as preview. [SDK and licensing][runtime] · [Security requirements][security] |
+| Managed Apps | An eligible tenant, a **Managed Environment** for deployment, and app sharing/environment access. Each app user needs either a **Power Apps Premium plan** or **Managed Application Copilot Credits**. The Managed Runtime SDK is documented as preview. [SDK and licensing][runtime] · [Security requirements][security] |
 | Copilot Studio specialists — either approach | Published agents that users can access, appropriate Copilot Studio capacity, and the bindings, connections and permissions for the **chosen invocation approach**. MCP and Agent Node are alternatives, not cumulative requirements. |
 | MCP channel — only if choosing MCP | The preview **MCP client** channel in an **early release cycle environment**. An ordinary sandbox or an environment named "Preview" is not sufficient. [Channel requirements][studio] · [Early release][early] |
 | MCP authentication — only if choosing MCP | A tenant Entra app registration, delegated `MCS.InvokeAsMCP`, OAuth authorization-code support, the connector's exact redirect URI and consent as required by tenant policy. Endpoint and scope hosts must match the actual channel environment. [Authentication][studio] |
