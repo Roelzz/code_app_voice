@@ -1,5 +1,7 @@
 # App Builder Template
 
+These are historical scaffold notes, not the sample's deployment contract. Start with the [integration showcase](../README.md) and [technical guide](technical-guide.md) for current repository behavior, prerequisites and the distinction between local app tooling and Managed Runtime tooling.
+
 A React + TypeScript + Vite template for in-session mini-apps built by an AI agent inside the App
 Builder. It ships **shadcn/ui (new-york, Radix)** + **Tailwind CSS v4** and a small, familiar set of
 libraries — no heavy state/form/validation frameworks — so an agent can build a polished app fast and with
@@ -59,8 +61,8 @@ Path alias: `@/` → `src/`.
 
 The build/iterate rules an agent needs at the per-app level — stack conventions, the Tailwind v4
 cheat-sheet, structure, and a one-line Capability controls list (each control's full how-to lives in the App
-Builder skill, so it stays current after the app is created) — live in **[AGENTS.md](./AGENTS.md)**, with the
-OKLCH presets in its sibling **[THEMING.md](./THEMING.md)** (read on a turn-1 build or recolor/restyle). The file
+Builder skill, so it stays current after the app is created) — live in **[AGENTS.md](../AGENTS.md)**, with the
+OKLCH presets in its sibling **[THEMING.md](../THEMING.md)** (read on a turn-1 build or recolor/restyle). The file
 format is agent-agnostic — any coding agent (Claude Code, Codex, Cursor, …) reads these, and there is
 intentionally no `CLAUDE.md`. Within the App Builder, the subagent that builds and iterates apps is
 additionally governed by its own always-loaded operating rules — the verification loop and the full "what
