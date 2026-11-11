@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Check,
@@ -398,6 +398,7 @@ function FacilitatorPanel({
 }) {
   const helper = getHelper(helperId);
   const specialist = helperId !== "workiq";
+  const sessionBusy = useSyncExternalStore(session.subscribeBusy, session.getBusySnapshot, session.getBusySnapshot);
   const waitLabel = specialist && transport === "agentnode" ? "three minutes" : "30 seconds";
   const [request, setRequest] = useState<AiRequest | null>(null);
   const [seq, setSeq] = useState(0);
@@ -449,7 +450,7 @@ function FacilitatorPanel({
   });
   const busy = query.isFetching;
   const newConversationRequired = specialist && session.requiresNewConversation;
-  const transportBusy = busy || voiceQuestion.isPending || session.isBusy;
+  const transportBusy = busy || voiceQuestion.isPending || sessionBusy;
 
   useEffect(() => {
     if (!busy || request === null) return;

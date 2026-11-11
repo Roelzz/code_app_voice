@@ -244,6 +244,60 @@ for (const transport of ["mcp", "agentnode"]) {
   });
 }
 
+test("late MCP settlement reactively unlocks transport switching after the timeout without overlapping requests", async () => {
+  await select("Failure Risk Prioritizer");
+  const pending = deferred();
+  Object.assign(mcp, mcpService(() => pending.promise));
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    await act(async () => {
+      button("Facilitation questions").click();
+      await new Promise(setImmediate);
+    });
+    assert.equal(toolCalls(mcp.RiskMcp).length, 1);
+    await act(async () => {
+      mock.timers.tick(30_000);
+      await new Promise(setImmediate);
+      mock.timers.tick(0);
+    });
+    assert.match(document.body.textContent, /30-second/);
+    assert.equal(document.querySelector('[aria-label="Facilitator output"]').getAttribute("aria-busy"), "false");
+    assert.equal(button("MCP").disabled, true, "The timed-out upstream operation still owns the gate");
+    assert.equal(button("Agent connector").disabled, true);
+    await act(async () => {
+      button("Agent connector").click();
+      await assert.rejects(voiceOptions.askCopilot("Must not overlap"), (error) => error.code === "busy");
+      await new Promise(setImmediate);
+      mock.timers.tick(0);
+    });
+    assert.equal(button("MCP").getAttribute("aria-checked"), "true");
+    assert.equal(toolCalls(mcp.RiskMcp).length, 1);
+    assert.equal(service.InvokeAgent.mock.callCount(), 0);
+
+    await act(async () => {
+      pending.resolve(toolResult("Late MCP answer"));
+      await new Promise(setImmediate);
+    });
+    assert.equal(button("MCP").disabled, false, "Late settlement must unlock MCP without user or incidental updates");
+    assert.equal(button("Agent connector").disabled, false, "Late settlement must unlock Agent connector reactively");
+    assert.doesNotMatch(document.body.textContent, /Late MCP answer/);
+    await act(async () => button("Agent connector").click());
+    assert.equal(button("Agent connector").getAttribute("aria-checked"), "true");
+    await act(async () => {
+      button("Facilitation questions").click();
+      await new Promise(setImmediate);
+      mock.timers.tick(0);
+    });
+    assert.equal(service.InvokeAgent.mock.callCount(), 1);
+    assert.equal(service.InvokeAgent.mock.calls[0].arguments[1], undefined, "Transport changes start a fresh conversation");
+    assert.equal(toolCalls(mcp.RiskMcp).length, 1);
+  } finally {
+    pending.resolve(toolResult("Late MCP answer"));
+    await act(async () => new Promise(setImmediate));
+    mock.timers.reset();
+  }
+});
+
 test("native new conversation resets history/output and clarification never becomes an applicable row", async () => {
   await selectNative("Failure Mode Identifier");
   await click("Suggest failure modes");

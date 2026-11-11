@@ -158,6 +158,20 @@ export class HelperSession {
   private initialized = false;
   private nativeTurnUnresolved = false;
   private selectedTransport: SpecialistTransport = "mcp";
+  private readonly busyListeners = new Set<() => void>();
+
+  readonly subscribeBusy = (listener: () => void): (() => void) => {
+    this.busyListeners.add(listener);
+    return () => { this.busyListeners.delete(listener); };
+  };
+
+  readonly getBusySnapshot = (): boolean => this.busy;
+
+  private setBusy(busy: boolean) {
+    if (busy === this.busy) return;
+    this.busy = busy;
+    for (const listener of this.busyListeners) listener();
+  }
 
   get transport(): SpecialistTransport {
     return this.selectedTransport;
@@ -191,12 +205,12 @@ export class HelperSession {
   ) => Promise<T>): Promise<T> {
     if (this.busy) throw new HelperError("busy", "The previous helper request is still finishing. Wait before sending another question.");
     if (this.requiresNewConversation) throw new HelperError("connection", NATIVE_RESET_MESSAGE, undefined, true);
-    this.busy = true;
+    this.setBusy(true);
     const generation = this.generation;
     const native = this.helperId !== "workiq" && this.transport === "agentnode";
     const wait = native ? NATIVE_AGENT_TIMEOUT_MS : 30_000;
     const turn = { dispatched: false };
-    const operation = request(getHelper(this.helperId), Date.now() + wait, turn).finally(() => { this.busy = false; });
+    const operation = request(getHelper(this.helperId), Date.now() + wait, turn).finally(() => { this.setBusy(false); });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
