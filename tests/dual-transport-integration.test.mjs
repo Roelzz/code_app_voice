@@ -25,6 +25,14 @@ const { useRealtimeVoice: realUseRealtimeVoice } = await import(await loadVoiceH
 
 const service = agentNodeService();
 const mcp = mcpService();
+let nativeReadiness;
+const nativeBoundary = nativeAgentMock(service);
+const invokeNative = nativeBoundary.invokeAgentNode;
+nativeBoundary.invokeAgentNode = async (...args) => {
+  if (nativeReadiness) await nativeReadiness.promise;
+  args[3]?.();
+  return invokeNative(...args);
+};
 const workiq = {
   callWorkIqCopilotChatText: mock.fn(async () => "Work IQ answer"),
   callWorkIqCopilotChatItems: mock.fn(async () => []),
@@ -35,7 +43,7 @@ const stopVoice = mock.fn();
 const stopSpeaking = mock.fn();
 const speak = mock.fn();
 globalThis.dualTransportIntegration = {
-  mcp, native: nativeAgentMock(service), workiq, stopSpeaking, speak,
+  mcp, native: nativeBoundary, workiq, stopSpeaking, speak,
   useVoice: (options) => {
     voiceOptions = options;
     const voice = realUseRealtimeVoice(options);
@@ -102,6 +110,7 @@ beforeEach(async () => {
   }
   Object.assign(service, agentNodeService());
   Object.assign(mcp, mcpService());
+  nativeReadiness = undefined;
   delete globalThis.dualTransportIntegration.native.channelError;
   workiq.callWorkIqCopilotChatText.mock.resetCalls();
   workiq.callWorkIqCopilotChatText.mock.mockImplementation(async () => "Work IQ answer");
@@ -160,7 +169,76 @@ async function selectNative(name) {
   await select(name);
   if (button("Agent connector").getAttribute("aria-checked") !== "true") await click("Agent connector");
 }
-const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
+const deferred = () => {
+  let resolve, reject;
+  const promise = new Promise((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+};
+
+function installRealtimeBoundaries() {
+  const peers = [];
+  function boundary(name, value) {
+    saved.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+    Object.defineProperty(globalThis, name, { value, writable: true, configurable: true });
+  }
+  boundary("RTCPeerConnection", class {
+    constructor() {
+      this.connectionState = "new";
+      this.channel = {
+        readyState: "open", sent: [],
+        send(data) { this.sent.push(JSON.parse(data)); },
+        close() { this.readyState = "closed"; },
+      };
+      peers.push(this);
+    }
+    addTrack() {}
+    createDataChannel() { return this.channel; }
+    async createOffer() { return { type: "offer", sdp: "test-offer" }; }
+    async setLocalDescription() {}
+    async setRemoteDescription() {}
+    close() { this.connectionState = "closed"; }
+  });
+  boundary("Audio", class {
+    play = async () => {};
+    pause() {}
+  });
+  boundary("fetch", mock.fn(async () => ({ ok: true, text: async () => "test-answer" })));
+  const microphoneStop = mock.fn();
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true, value: {
+      getUserMedia: mock.fn(async () => ({
+        getAudioTracks: () => [{ stop: microphoneStop }],
+        getTracks: () => [{ stop: microphoneStop }],
+      })),
+    },
+  });
+  return { peers, microphoneStop };
+}
+
+async function startMountedVoice(peers) {
+  await act(async () => {
+    button("Start voice session").click();
+    await new Promise(setImmediate);
+  });
+  const channel = peers.at(-1)?.channel;
+  assert.ok(channel, "The mounted facilitator starts its real WebRTC hook");
+  await act(async () => {
+    channel.onopen();
+    channel.onmessage({ data: JSON.stringify({ type: "session.updated" }) });
+  });
+  return channel;
+}
+
+async function askMountedVoice(channel, id = "one", responseDone = true) {
+  await act(async () => {
+    channel.onmessage({ data: JSON.stringify({
+      type: "response.function_call_arguments.done", name: "ask_copilot", call_id: id, response_id: `response-${id}`,
+      arguments: JSON.stringify({ question: "What fails?" }),
+    }) });
+    if (responseDone) channel.onmessage({ data: JSON.stringify({ type: "response.done", response: { id: `response-${id}` } }) });
+    await new Promise(setImmediate);
+  });
+}
 
 test("transport controls are specialist-only, default to MCP and route typed and voice through the explicit native selection", async () => {
   assert.equal(button("MCP"), undefined);
@@ -229,43 +307,7 @@ test("changing either transport stops voice/read-aloud and remounts output, read
 });
 
 test("actual facilitator wires route-specific voice consulting limits and delivers a native answer after 30 seconds", async () => {
-  const peers = [];
-  function boundary(name, value) {
-    saved.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
-    Object.defineProperty(globalThis, name, { value, writable: true, configurable: true });
-  }
-  boundary("RTCPeerConnection", class {
-    constructor() {
-      this.connectionState = "new";
-      this.channel = {
-        readyState: "open", sent: [],
-        send(data) { this.sent.push(JSON.parse(data)); },
-        close() { this.readyState = "closed"; },
-      };
-      peers.push(this);
-    }
-    addTrack() {}
-    createDataChannel() { return this.channel; }
-    async createOffer() { return { type: "offer", sdp: "test-offer" }; }
-    async setLocalDescription() {}
-    async setRemoteDescription() {}
-    close() { this.connectionState = "closed"; }
-  });
-  boundary("Audio", class {
-    play = async () => {};
-    pause() {}
-  });
-  boundary("fetch", mock.fn(async () => ({ ok: true, text: async () => "test-answer" })));
-  const microphoneStop = mock.fn();
-  Object.defineProperty(navigator, "mediaDevices", {
-    configurable: true, value: {
-      getUserMedia: mock.fn(async () => ({
-        getAudioTracks: () => [{ stop: microphoneStop }],
-        getTracks: () => [{ stop: microphoneStop }],
-      })),
-    },
-  });
-
+  const { peers, microphoneStop } = installRealtimeBoundaries();
   for (const route of [
     { helper: "Microsoft 365 Copilot", transport: null, seconds: 30, kind: "workiq" },
     { helper: "Failure Risk Prioritizer", transport: "MCP", seconds: 30, kind: "mcp" },
@@ -283,25 +325,9 @@ test("actual facilitator wires route-specific voice consulting limits and delive
     await click("Talk to Copilot");
     mock.timers.enable({ apis: ["Date", "setTimeout"], now: new Date("2026-11-11T12:00:00Z") });
     try {
-      await act(async () => {
-        button("Start voice session").click();
-        await new Promise(setImmediate);
-      });
-      const channel = peers.at(-1)?.channel;
-      assert.ok(channel, "The mounted facilitator starts its real WebRTC hook");
-      await act(async () => {
-        channel.onopen();
-        channel.onmessage({ data: JSON.stringify({ type: "session.updated" }) });
-      });
+      const channel = await startMountedVoice(peers);
       assert.match(channel.sent[0].session.instructions, new RegExp(`Selected helper: ${route.helper}`));
-      await act(async () => {
-        channel.onmessage({ data: JSON.stringify({
-          type: "response.function_call_arguments.done", name: "ask_copilot", call_id: "one", response_id: "response-one",
-          arguments: JSON.stringify({ question: "What fails?" }),
-        }) });
-        channel.onmessage({ data: JSON.stringify({ type: "response.done", response: { id: "response-one" } }) });
-        await new Promise(setImmediate);
-      });
+      await askMountedVoice(channel);
       const dialog = document.querySelector('[role="dialog"]');
       assert.match(dialog.textContent, new RegExp(`The app waits up to ${route.seconds} seconds\\.`));
       assert.equal(dialog.querySelector("[data-voice-state]").getAttribute("data-voice-state"), "consulting");
@@ -338,6 +364,217 @@ test("actual facilitator wires route-specific voice consulting limits and delive
   assert.equal(globalThis.fetch.mock.callCount(), 4);
   assert.equal(microphoneStop.mock.callCount(), 4);
 });
+
+test("mounted native voice failure preserves sanitized reset recovery in the UI and tool output without retry or fallback", async () => {
+  const { peers } = installRealtimeBoundaries();
+  await selectNative("Failure Risk Prioritizer");
+  const pending = deferred();
+  service.InvokeAgent = mock.fn(() => pending.promise);
+  await click("Talk to Copilot");
+  try {
+    const channel = await startMountedVoice(peers);
+    await askMountedVoice(channel);
+    assert.equal(service.InvokeAgent.mock.callCount(), 1);
+    await act(async () => {
+      pending.reject(new Error("PRIVATE_NATIVE_NETWORK_SENTINEL"));
+      await new Promise(setImmediate);
+    });
+    await flush();
+    assert.match(document.body.textContent, /upstream run may still be active/);
+    assert.match(document.body.textContent, /Start a new conversation before sending another request/);
+    const output = channel.sent.find((event) => event.item?.type === "function_call_output")?.item.output;
+    assert.ok(output);
+    assert.match(output, /Start a new conversation before sending another request/);
+    assert.match(output, /upstream run may still be active/);
+    assert.doesNotMatch(output, /try again|PRIVATE_NATIVE_NETWORK_SENTINEL/i);
+    assert.doesNotMatch(channel.sent[0].session.instructions, /ask them to try again/i);
+    assert.match(channel.sent[0].session.instructions, /recovery/i);
+    assert.doesNotMatch(document.body.textContent, /PRIVATE_NATIVE_NETWORK_SENTINEL/);
+    assert.equal(button("Facilitation questions").disabled, true);
+    assert.equal(button("Try again"), undefined);
+    assert.equal(button("Regenerate"), undefined);
+    await act(async () => button("Facilitation questions").click());
+    await act(async () => assert.rejects(voiceOptions.askCopilot("Cannot silently retry"), (error) => error.requiresNewConversation === true));
+    assert.equal(service.InvokeAgent.mock.callCount(), 1);
+    for (const method of Object.values(mcp)) assert.equal(method.mock.callCount(), 0);
+    assert.equal(workiq.callWorkIqCopilotChatText.mock.callCount(), 0);
+    await click("Close");
+    await click("New conversation");
+    assert.doesNotMatch(document.body.textContent, /upstream run may still be active/);
+    Object.assign(service, agentNodeService());
+    await click("Talk to Copilot");
+    const freshChannel = await startMountedVoice(peers);
+    await askMountedVoice(freshChannel, "fresh");
+    assert.equal(freshChannel.sent[1].item.output, "Specialist answer");
+    assert.equal(service.InvokeAgent.mock.calls[0].arguments[1], undefined);
+  } finally {
+    await act(async () => {
+      liveVoice?.stop();
+      pending.resolve(agentNodeReply());
+      await new Promise(setImmediate);
+    });
+  }
+});
+
+test("mounted voice preserves an actionable channel error when response.done is missing until the tool deadline", async () => {
+  const { peers } = installRealtimeBoundaries();
+  await selectNative("Failure Risk Prioritizer");
+  const safeError = "The protected native channel is unavailable. No native request was sent.";
+  nativeBoundary.channelError = new nativeBoundary.AgentNodeTransportError("connection", safeError, "protected");
+  await click("Talk to Copilot");
+  mock.timers.enable({ apis: ["Date", "setTimeout"], now: new Date("2026-11-11T12:00:00Z") });
+  try {
+    const channel = await startMountedVoice(peers);
+    await askMountedVoice(channel, "one", false);
+    await act(async () => mock.timers.tick(0));
+    assert.match(document.body.textContent, /The protected native channel is unavailable\. No native request was sent\./);
+    assert.equal(channel.sent.length, 1, "The helper error cannot be spoken until its response completes");
+    await act(async () => {
+      mock.timers.tick(180_000);
+      await new Promise(setImmediate);
+    });
+    assert.equal(channel.readyState, "closed");
+    assert.equal(document.querySelector('[role="alert"]').textContent, safeError);
+    assert.doesNotMatch(document.body.textContent, /180-second limit|upstream run may still be active|Start a new conversation/);
+    assert.equal(service.InvokeAgent.mock.callCount(), 0);
+    assert.equal(channel.sent.length, 1);
+    assert.equal(workiq.callWorkIqCopilotChatText.mock.callCount(), 0);
+    for (const method of Object.values(mcp)) assert.equal(method.mock.callCount(), 0);
+  } finally {
+    await act(async () => liveVoice?.stop());
+    mock.timers.reset();
+  }
+});
+
+for (const ending of ["stop", "restart", "reset and restart"]) {
+  test(`mounted voice ignores a late rejected helper after ${ending} without leaking errors or output`, async () => {
+    const { peers } = installRealtimeBoundaries();
+    const native = ending !== "restart";
+    if (native) await selectNative("Failure Risk Prioritizer");
+    else await select("Failure Risk Prioritizer");
+    const pending = deferred();
+    if (native) service.InvokeAgent = mock.fn(() => pending.promise);
+    else Object.assign(mcp, mcpService(() => pending.promise));
+    await click("Talk to Copilot");
+    try {
+      const oldChannel = await startMountedVoice(peers);
+      await askMountedVoice(oldChannel);
+      await click("End voice session");
+      assert.equal(oldChannel.readyState, "closed");
+      let freshChannel;
+      if (ending === "reset and restart") {
+        await click("Close");
+        await click("New conversation");
+        await click("Talk to Copilot");
+        freshChannel = await startMountedVoice(peers);
+      } else if (ending === "restart") freshChannel = await startMountedVoice(peers);
+      assert.equal(button("Agent connector").disabled, true, "Stopping or resetting voice does not cancel the underlying request");
+      await act(async () => button(native ? "MCP" : "Agent connector").click());
+      assert.equal(button(native ? "Agent connector" : "MCP").getAttribute("aria-checked"), "true");
+      await act(async () => {
+        pending.reject(new Error("PRIVATE_LATE_REJECTION_SENTINEL"));
+        await new Promise(setImmediate);
+      });
+      await flush();
+      assert.equal(oldChannel.sent.length, 1);
+      if (freshChannel) {
+        assert.equal(freshChannel.readyState, "open");
+        assert.equal(freshChannel.sent.length, 1, "The new session must not publish the previous session's failure");
+      }
+      assert.equal(document.querySelector('[role="alert"]'), null);
+      assert.doesNotMatch(document.body.textContent, /could not answer|could not be confirmed|upstream run may still be active|PRIVATE_LATE_REJECTION_SENTINEL/);
+      assert.doesNotMatch(JSON.stringify(peers.map((peer) => peer.channel.sent)), /PRIVATE_LATE_REJECTION_SENTINEL/);
+      assert.equal(native ? service.InvokeAgent.mock.callCount() : toolCalls(mcp.RiskMcp).length, 1);
+      assert.equal(workiq.callWorkIqCopilotChatText.mock.callCount(), 0);
+      if (freshChannel) {
+        if (native) Object.assign(service, agentNodeService());
+        else Object.assign(mcp, mcpService());
+        await askMountedVoice(freshChannel, "fresh");
+        assert.equal(freshChannel.sent[1].item.output, "Specialist answer");
+        assert.equal(native ? service.InvokeAgent.mock.calls[0].arguments[1] :
+          toolCalls(mcp.RiskMcp)[0].params.arguments.conversationId, undefined);
+      }
+    } finally {
+      await act(async () => {
+        liveVoice?.stop();
+        pending.resolve(native ? agentNodeReply() : toolResult());
+        await new Promise(setImmediate);
+      });
+    }
+  });
+}
+
+for (const dispatched of [true, false]) {
+  test(`mounted native voice timeout ${dispatched ? "preserves dispatched reset recovery" : "does not claim dispatch or require reset before submission"}`, async () => {
+    const { peers } = installRealtimeBoundaries();
+    await selectNative("Failure Risk Prioritizer");
+    const pending = deferred();
+    const readiness = deferred();
+    if (!dispatched) nativeReadiness = readiness;
+    service.InvokeAgent = mock.fn(() => pending.promise);
+    await click("Talk to Copilot");
+    mock.timers.enable({ apis: ["Date", "setTimeout"], now: new Date("2026-11-11T12:00:00Z") });
+    try {
+      const channel = await startMountedVoice(peers);
+      await askMountedVoice(channel);
+      assert.equal(service.InvokeAgent.mock.callCount(), dispatched ? 1 : 0);
+      await act(async () => mock.timers.tick(179_999));
+      assert.equal(channel.readyState, "open");
+      await act(async () => {
+        mock.timers.tick(1);
+        await new Promise(setImmediate);
+        mock.timers.tick(0);
+      });
+      assert.equal(channel.readyState, "closed");
+      assert.equal(channel.sent.length, 1);
+      const error = document.querySelector('[role="alert"]')?.textContent;
+      assert.ok(error);
+      assert.match(error, /180-second limit/);
+      if (dispatched) {
+        assert.match(error, /upstream run may still be active/);
+        assert.match(error, /Start a new conversation before sending another request/);
+        assert.equal(button("Facilitation questions").disabled, true);
+        assert.equal(button("Start voice session").disabled, true);
+      } else {
+        assert.doesNotMatch(error, /upstream run|new conversation|request was sent|request has been sent|request was dispatched/i);
+        assert.equal(button("Facilitation questions").disabled, false);
+        assert.equal(button("Start voice session").disabled, false);
+      }
+      assert.equal(button("MCP").disabled, true, "The underlying transport still owns the gate after voice timeout");
+      await act(async () => {
+        readiness.resolve();
+        pending.resolve(agentNodeReply("PRIVATE_LATE_TIMEOUT_SENTINEL"));
+        await new Promise(setImmediate);
+        mock.timers.tick(0);
+      });
+      assert.equal(button("MCP").disabled, false);
+      assert.equal(service.InvokeAgent.mock.callCount(), dispatched ? 1 : 0);
+      assert.equal(document.querySelector('[role="alert"]').textContent, error, "Late settlement must not replace the timeout's recovery instruction");
+      assert.doesNotMatch(document.body.textContent, /PRIVATE_LATE_TIMEOUT_SENTINEL/);
+      assert.equal(button("Try again"), undefined);
+      assert.equal(button("Regenerate"), undefined);
+      for (const method of Object.values(mcp)) assert.equal(method.mock.callCount(), 0);
+      assert.equal(workiq.callWorkIqCopilotChatText.mock.callCount(), 0);
+      if (!dispatched) {
+        nativeReadiness = undefined;
+        Object.assign(service, agentNodeService());
+        const freshChannel = await startMountedVoice(peers);
+        await askMountedVoice(freshChannel, "fresh");
+        assert.equal(freshChannel.sent[1].item.output, "Specialist answer");
+        assert.equal(service.InvokeAgent.mock.calls[0].arguments[1], undefined);
+      }
+    } finally {
+      await act(async () => {
+        liveVoice?.stop();
+        readiness.resolve();
+        pending.resolve(agentNodeReply());
+        await new Promise(setImmediate);
+      });
+      nativeReadiness = undefined;
+      mock.timers.reset();
+    }
+  });
+}
 
 for (const transport of ["mcp", "agentnode"]) {
   test(`${transport} disables transport changes during typed and voice questions and shows the correct wait limit`, async () => {

@@ -33,7 +33,7 @@ export class HelperError extends Error {
   }
 }
 
-const NATIVE_RESET_MESSAGE = "The upstream run may still be active. Start a new conversation before sending another request; this does not cancel the previous run.";
+export const NATIVE_RESET_MESSAGE = "The upstream run may still be active. Start a new conversation before sending another request; this does not cancel the previous run.";
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);

@@ -25,7 +25,7 @@ import { ConnectorErrorState, ErrorState } from "@/components/states";
 import { DictationButton } from "@/components/dictation-button";
 import { VoiceConsole } from "@/components/voice-console";
 import { HelperChooser } from "@/components/helper-chooser";
-import { getHelper, HelperError, HelperSession, helperErrorMessage, type HelperId, type SpecialistTransport } from "@/connectors/dfmea-helpers";
+import { getHelper, HelperError, HelperSession, helperErrorMessage, NATIVE_RESET_MESSAGE, type HelperId, type SpecialistTransport } from "@/connectors/dfmea-helpers";
 import { speechOutputSupported, useSpeechReader } from "@/hooks/use-voice";
 import { useRealtimeVoice, type RealtimeVoiceToken } from "@/hooks/use-realtime-voice";
 import {
@@ -427,15 +427,14 @@ function FacilitatorPanel({
   const realtimeVoice = useRealtimeVoice({
     helperName: helper.name,
     helperTimeoutMs,
+    formatHelperError: helperErrorMessage,
+    getHelperTimeoutHint: () => session.requiresNewConversation ? NATIVE_RESET_MESSAGE : undefined,
     requestToken:
       requestRealtimeToken ??
       (() => Promise.reject(new WorkIqConnectorError("Realtime voice connector is not configured.", undefined, undefined))),
     askCopilot: async (text) => {
       try {
         return await voiceQuestion.mutateAsync(text);
-      } catch (error) {
-        setVoiceMessage(helperErrorMessage(error));
-        throw error;
       } finally {
         voiceQuestion.reset();
       }

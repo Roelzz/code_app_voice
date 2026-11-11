@@ -34,7 +34,7 @@ const VOICE_TOOL = {
 } as const;
 
 const SESSION_INSTRUCTIONS =
-  "You are the voice interface for a DFMEA workshop. The selected helper is the only source of answers. For every user question, call ask_copilot and wait for its result. Do not answer from your own knowledge, invent details, or claim to have searched files. Briefly acknowledge while waiting. After the tool returns, speak a concise version of its answer. If the tool reports an error, tell the user the helper could not answer and ask them to try again.";
+  "You are the voice interface for a DFMEA workshop. The selected helper is the only source of answers. For every user question, call ask_copilot and wait for its result. Do not answer from your own knowledge, invent details, or claim to have searched files. Briefly acknowledge while waiting. After the tool returns, speak a concise version of its answer. If the tool reports an error, explain its supplied recovery instructions; do not retry, switch helpers or invent an answer.";
 
 const SETUP_TIMEOUT_MS = 30_000;
 const CALLS_URL = "https://dfmea-voice-fy27.openai.azure.com/openai/v1/realtime/calls";
@@ -54,6 +54,7 @@ interface VoiceToolCall {
   callId: string;
   responseId: string;
   output: string | null;
+  error: string | null;
 }
 
 function isRealtimeEvent(value: unknown): value is RealtimeEvent {
@@ -77,12 +78,16 @@ export function useRealtimeVoice({
   askCopilot,
   onError,
   helperTimeoutMs,
+  formatHelperError,
+  getHelperTimeoutHint,
   helperName = "Microsoft 365 Copilot",
 }: {
   requestToken: () => Promise<RealtimeVoiceToken>;
   askCopilot: (question: string) => Promise<string>;
   onError: (message: string) => void;
   helperTimeoutMs: number;
+  formatHelperError?: (error: unknown) => string;
+  getHelperTimeoutHint?: () => string | undefined;
   helperName?: string;
 }) {
   const [status, setStatus] = useState<RealtimeVoiceStatus>("idle");
@@ -285,20 +290,25 @@ export function useRealtimeVoice({
           fail("The helper is already answering a voice question. Start voice again after the request finishes.");
           return;
         }
-        const request: VoiceToolCall = { callId, responseId: event.response_id, output: null };
+        const request: VoiceToolCall = { callId, responseId: event.response_id, output: null, error: null };
         pending = request;
         setActivity("consulting");
         run.toolTimer = setTimeout(() => {
-          fail(`The helper did not answer within the app's ${helperTimeoutMs / 1000}-second limit. Try a shorter question.`);
+          if (!current()) return;
+          const hint = getHelperTimeoutHint?.() ?? "Try a shorter question.";
+          fail(request.error ?? `The helper did not answer within the app's ${helperTimeoutMs / 1000}-second limit. ${hint}`);
         }, helperTimeoutMs);
         void (async () => {
           let output: string;
           try {
             if (!question) throw new Error("The voice model did not provide a valid question.");
             output = await askQuestion(question);
-          } catch {
-            output = "The selected helper could not answer this request. Tell the user to try again; do not make up an answer.";
-            if (current()) onErrorRef.current("The selected helper could not answer the voice question. Check the connection or try again.");
+          } catch (error) {
+            if (!current()) return;
+            const message = formatHelperError?.(error) ?? "The selected helper could not answer the voice question. Check the connection or try again.";
+            request.error = message;
+            output = `The selected helper could not answer this request. ${message} Explain this error to the user; do not retry or make up an answer.`;
+            onErrorRef.current(message);
           }
           if (!current()) return;
           request.output = output;
@@ -353,7 +363,7 @@ export function useRealtimeVoice({
             : "Realtime voice couldn't connect. Check the app network policy and try again.";
       fail(message);
     }
-  }, [requestToken, stop, helperName, helperTimeoutMs]);
+  }, [requestToken, stop, helperName, helperTimeoutMs, formatHelperError, getHelperTimeoutHint]);
 
   useEffect(() => cleanup, [cleanup]);
 
