@@ -316,7 +316,8 @@ It compiles the actual `Script.csx` against the SDK's Newtonsoft assembly and te
 | App ID | `088be080-35da-497a-a83e-0b870c975893` |
 | Native repository ID | `d1d3cd61-ab84-4863-b6e2-720b38eee6eb` |
 | Baseline deployed commit | `6b8ebc262fea43dd98389e67e109a2f3b6eade2a` |
-| Current deployed voice-console commit | `12c6ed88787190bceb77602cde62d5908262f4d0` |
+| Current deployed release | `7520e85d4c4ae27539f5611c611e03a4817493de` |
+| Previous voice-only rollback | `12c6ed88787190bceb77602cde62d5908262f4d0` |
 | Release evidence and rollback | [HANDOVER.md](docs/HANDOVER.md) |
 
 The original MSIT app is left untouched. Migration created a new app and native platform repository, new generated connector bindings and target authentication. It did not copy original sharing, credentials or business data.
