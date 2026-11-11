@@ -4,6 +4,12 @@
 
 The app brings the AIAG-VDA seven-step workflow, product structure, failure chains, ratings and improvement actions into one screen. A cross-functional design team stays in control: Copilot suggests and challenges; people choose ratings, review suggestions and decide what enters the DFMEA.
 
+## An adaptable integration sample
+
+This fictional DFMEA workshop is one illustrative use case for **Microsoft Copilot Managed Apps**, **Copilot Studio specialist agents**, **Microsoft 365 Copilot through Work IQ**, and **Azure OpenAI Realtime voice**. It shows how a managed application can combine a domain-specific interface, a choice of answer sources and conversational speech. The same integration ideas can be adapted to other workflows; DFMEA is the example, not a requirement.
+
+This is **not a production-ready turnkey solution**. The capabilities and verification evidence below describe this particular deployment, not automatic provisioning or compatibility in another tenant. To adapt the sample, configure your own tenant and environment IDs, agent IDs, tool-generated connector bindings, authentication and permissions, and voice infrastructure (Azure resources, broker, Realtime deployment and allowed origins). Do not reuse the example's deployment identities or credentials. Cross-tenant setup, governance approval, validation and end-to-end testing remain your responsibility.
+
 [Open the CAPE app](https://play.managedapps.cloud.microsoft/apps/088be080-35da-497a-a83e-0b870c975893) · [Operational handover](docs/HANDOVER.md) · [Voice broker](voice-broker/README.md)
 
 > **Release status:** the four-helper chooser, dedicated animated voice console and FRE specialist MCP integration are deployed to the CAPE app at commit `7520e85d4c4ae27539f5611c611e03a4817493de`, also pushed to this GitHub repository. The user confirmed all three typed specialist answers in the hosted preview, then confirmed live text, spoken answers and microphone release. This is user-observed acceptance, not an independently captured browser/network trace. The operational handover records exact evidence and rollback.
