@@ -2,7 +2,9 @@
 
 This Azure Functions app mints short-lived Azure OpenAI Realtime client secrets with its managed identity. The browser uses the secret only to establish one WebRTC voice session. It is never stored, logged or sent to Work IQ.
 
-## Deployed resources
+For the integration story, start with the [showcase](../README.md); see the [technical guide](../docs/technical-guide.md#realtime-voice-lifecycle) for identity, lifecycle and adaptation boundaries. The resource names below are historical example-deployment details, not resources supplied by cloning this repository or a statement of current live state.
+
+## Example deployment resources
 
 - Subscription: `cape-workshops-fy27`
 - Resource group: `rg-dfmea-voice`
@@ -16,9 +18,9 @@ The Function's managed identity has `Cognitive Services OpenAI User` on the Azur
 
 ## Connector setup
 
-Import `openapi.yaml` into App Builder as a custom connector. Configure OAuth with the tenant, API scope, client ID and client secret from the private session files under `files/secrets/`. The secret is not part of this repository. Add the connector to the app and use the generated client operation; never hand-edit `generated/`.
+Use `openapi.yaml` as a custom-connector starting point with your own broker endpoint. Configure OAuth for your own tenant, API scope, registration and exact redirect URI; keep credentials in approved platform configuration or a secret store, never in the repository. Add the connector through supported tooling and use the generated client operation; never hand-edit `generated/`.
 
-The App Builder app's CSP must allow `https://dfmea-voice-fy27.openai.azure.com` in `connect-src` for WebRTC signaling. Work IQ remains the answer source: the voice client sends the user's question through the `ask_copilot` tool callback and speaks the returned Copilot answer.
+The app's CSP must allow its exact Azure OpenAI origin in `connect-src` for WebRTC signaling; the example uses `https://dfmea-voice-fy27.openai.azure.com`. The selected Work IQ or Copilot Studio helper remains the answer source: the voice client sends the user's question through `ask_copilot` and speaks the returned helper answer.
 
 ## Local checks
 
