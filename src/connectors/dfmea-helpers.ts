@@ -1,5 +1,4 @@
-import { DFMEASpecialistMCPService } from "../../generated";
-import type { McpRequest } from "../../generated/models/DFMEASpecialistMCPModel";
+import { AgentNodeTransportError, invokeAgentNode, NATIVE_AGENT_TIMEOUT_MS } from "./agentnode-preview";
 import {
   callWorkIqCopilotChatItems, callWorkIqCopilotChatText,
   WorkIqConnectorError, WorkIqResponseError,
@@ -21,11 +20,17 @@ export function getHelper(id: HelperId) {
 }
 
 export class HelperError extends Error {
-  constructor(readonly code: "busy" | "stale" | "connection" | "format" | "timeout" | "unsupported" | "policy", message: string) {
+  constructor(
+    readonly code: "busy" | "stale" | "connection" | "format" | "timeout" | "unsupported" | "policy", message: string,
+    readonly channelReason?: AgentNodeTransportError["channelReason"],
+    readonly requiresNewConversation = false,
+  ) {
     super(message);
     this.name = "HelperError";
   }
 }
+
+const NATIVE_RESET_MESSAGE = "The upstream run may still be active. Start a new conversation before sending another request; this does not cancel the previous run.";
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -97,6 +102,23 @@ export function parseMcpReply(result: Record<string, unknown>, expectedConversat
   return { text, conversationId };
 }
 
+export function parseAgentNodeReply(data: unknown, expectedConversation?: string): { text: string; conversationId: string } {
+  if (!record(data) || typeof data.conversationId !== "string" || !GUID.test(data.conversationId) ||
+      (expectedConversation !== undefined && data.conversationId !== expectedConversation) ||
+      (data.status !== undefined && data.status !== "Completed") ||
+      typeof data.result !== "string" || !data.result.trim() || data.result.length > 524288) {
+    throw new HelperError("format", "The native agent returned no complete readable answer.");
+  }
+  const text = data.result.trim();
+  if (/EnvironmentGroupPolicyViolation/i.test(text)) {
+    throw new HelperError("policy", "The specialist was blocked by its environment policy. Ask the environment administrator to review the agent; retrying will not fix this.");
+  }
+  if (/^This action (?:doesn't|does not) support agents built with the GitHub Copilot harness[.\s]/i.test(text)) {
+    throw new HelperError("unsupported", "The native agent action does not support the selected specialist. Keep using the live MCP integration.");
+  }
+  return { text, conversationId: data.conversationId };
+}
+
 export type HelperRows<T extends WorkIqResponseSchema> =
   | { kind: "rows"; items: WorkIqSchemaItem<T>[] }
   | { kind: "clarification"; text: string };
@@ -130,30 +152,43 @@ export class HelperSession {
   private conversationId: string | undefined;
   private busy = false;
   private helperId: HelperId = "workiq";
-  private initialized = false;
+  private nativeTurnUnresolved = false;
+
+  get requiresNewConversation(): boolean {
+    return this.helperId !== "workiq" && this.nativeTurnUnresolved;
+  }
 
   select(id: HelperId) {
     this.helperId = id;
     this.conversationId = undefined;
-    this.initialized = false;
+    this.nativeTurnUnresolved = false;
     this.generation += 1;
   }
 
-  private async run<T>(request: (helper: ReturnType<typeof getHelper>) => Promise<T>): Promise<T> {
+  private async run<T>(request: (
+    helper: ReturnType<typeof getHelper>, deadline: number, turn: { dispatched: boolean },
+  ) => Promise<T>): Promise<T> {
     if (this.busy) throw new HelperError("busy", "The previous helper request is still finishing. Wait before sending another question.");
+    if (this.requiresNewConversation) throw new HelperError("connection", NATIVE_RESET_MESSAGE, undefined, true);
     this.busy = true;
     const generation = this.generation;
-    const operation = request(getHelper(this.helperId)).finally(() => { this.busy = false; });
+    const helper = getHelper(this.helperId);
+    const wait = helper.id === "workiq" ? 30_000 : NATIVE_AGENT_TIMEOUT_MS;
+    const turn = { dispatched: false };
+    const operation = request(helper, Date.now() + wait, turn).finally(() => { this.busy = false; });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
+        const requiresNewConversation = turn.dispatched;
         if (generation === this.generation) {
           this.generation += 1;
-          this.conversationId = undefined;
-          this.initialized = false;
+          if (helper.id === "workiq") this.conversationId = undefined;
         }
-        reject(new HelperError("timeout", "The helper did not answer within the app's 30-second limit. The upstream request may still be finishing; wait before trying again."));
-      }, 30_000);
+        reject(new HelperError("timeout", helper.id === "workiq"
+          ? "The helper did not answer within the app's 30-second limit. The upstream request may still be finishing; wait before trying again."
+          : `The native agent did not complete within three minutes. ${requiresNewConversation ? NATIVE_RESET_MESSAGE : "No native request was sent."}`,
+        undefined, requiresNewConversation));
+      }, wait);
     });
     try {
       const result = await Promise.race([operation, timeout]);
@@ -164,64 +199,54 @@ export class HelperSession {
     }
   }
 
-  private async specialistText(helper: ReturnType<typeof getHelper>, prompt: string): Promise<string> {
+  private async specialistText(
+    helper: ReturnType<typeof getHelper>, prompt: string, deadline: number, turn: { dispatched: boolean },
+  ): Promise<string> {
     const generation = this.generation;
     const ensureCurrent = () => {
       if (generation !== this.generation) throw new HelperError("stale", "This answer belongs to an ended conversation.");
     };
-    const rpc = async (method: McpRequest["method"], params: McpRequest["params"]) => {
-      ensureCurrent();
-      const body: McpRequest = { jsonrpc: "2.0", id: crypto.randomUUID(), method, params };
-      const result = helper.id === "failure-modes" ? await DFMEASpecialistMCPService.FailureModeMcp(body) :
-        helper.id === "risk" ? await DFMEASpecialistMCPService.RiskMcp(body) :
-          await DFMEASpecialistMCPService.ActionMcp(body);
-      ensureCurrent();
-      if (!result.success) throw new HelperError("connection", "The selected agent connection needs attention. Check sign-in, agent access and availability.");
-      return parseMcpResult(result.data, body.id);
-    };
     try {
-      if (!this.initialized) {
-        const info = await rpc("initialize", {
-          protocolVersion: "2025-03-26", capabilities: {},
-          clientInfo: { name: "DFMEA Workshop Studio", version: "1.0" },
-        });
-        if (info.protocolVersion !== "2025-03-26" || !record(info.capabilities) || !record(info.capabilities.tools)) return invalidReply();
-        const list = await rpc("tools/list", {});
-        if (!Array.isArray(list.tools) || !list.tools.some((tool) => record(tool) && tool.name === "send-message")) {
-          throw new HelperError("unsupported", "The selected specialist does not expose the supported send-message tool.");
-        }
-        this.initialized = true;
-      }
-      const result = await rpc("tools/call", {
-        name: "send-message",
-        arguments: { message: prompt, ...(this.conversationId ? { conversationId: this.conversationId } : {}) },
+      ensureCurrent();
+      const data = await invokeAgentNode({
+        agentId: helper.schemaName,
+        prompt,
+        isHitlEscalationEnabled: false,
+      }, this.conversationId, HELPER_ENVIRONMENT, ensureCurrent, deadline, () => {
+        turn.dispatched = true;
+        if (generation === this.generation) this.nativeTurnUnresolved = true;
       });
-      const reply = parseMcpReply(result, this.conversationId);
+      ensureCurrent();
+      const reply = parseAgentNodeReply(data, this.conversationId);
       ensureCurrent();
       this.conversationId = reply.conversationId;
+      this.nativeTurnUnresolved = false;
       return reply.text;
     } catch (error) {
-      if (generation === this.generation) {
-        this.conversationId = undefined;
-        this.initialized = false;
+      const requiresNewConversation = turn.dispatched;
+      if (error instanceof HelperError || error instanceof AgentNodeTransportError) {
+        if (error instanceof HelperError && !requiresNewConversation) throw error;
+        throw new HelperError(error.code, requiresNewConversation ? `${error.message} ${NATIVE_RESET_MESSAGE}` : error.message,
+          error.channelReason, requiresNewConversation);
       }
-      if (error instanceof HelperError) throw error;
-      throw new HelperError("connection", "The selected agent could not be reached. Check the connection and agent access.");
+      throw new HelperError("connection", requiresNewConversation ? `The native invocation outcome could not be confirmed. ${NATIVE_RESET_MESSAGE}`
+        : "The selected agent could not be reached. No native request was sent. Check the connection and agent access.",
+      undefined, requiresNewConversation);
     }
   }
 
   text(prompt: string): Promise<string> {
-    return this.run((helper) => helper.schemaName === null
+    return this.run((helper, deadline, turn) => helper.schemaName === null
       ? callWorkIqCopilotChatText(prompt)
-      : this.specialistText(helper, prompt));
+      : this.specialistText(helper, prompt, deadline, turn));
   }
 
   items<T extends WorkIqResponseSchema>(prompt: string, schema: T): Promise<HelperRows<T>> {
-    return this.run(async (helper) => {
+    return this.run(async (helper, deadline, turn) => {
       if (helper.schemaName === null) return { kind: "rows", items: await callWorkIqCopilotChatItems(prompt, schema) };
       const shape = Object.entries(schema).map(([field, type]) => `${field}:${type}`).join(", ");
       const text = await this.specialistText(helper,
-        `${prompt} When ready to offer suggestions, return only a JSON array with ${shape}. If you need clarification, ask it instead; do not invent facts to fill the schema.`);
+        `${prompt} When ready to offer suggestions, return only a JSON array with ${shape}. If you need clarification, ask it instead; do not invent facts to fill the schema.`, deadline, turn);
       return helperRows(text, schema);
     });
   }

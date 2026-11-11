@@ -7,16 +7,17 @@ import { Window } from "happy-dom";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { CONVERSATION, NEXT_CONVERSATION, mcpService, toolResult, toolCalls } from "./mcp-fixture.mjs";
+import { CONVERSATION, NEXT_CONVERSATION } from "./mcp-fixture.mjs";
+import { agentNodeReply, agentNodeService, nativeAgentMock } from "./agentnode-fixture.mjs";
 
-const service = mcpService();
+const service = agentNodeService();
 const workiq = {
   callWorkIqCopilotChatText: mock.fn(async () => "Work IQ answer"),
   callWorkIqCopilotChatItems: mock.fn(async () => []),
 };
 let voiceOptions;
 const stopVoice = mock.fn();
-globalThis.helperIntegration = { service, workiq, useVoice: (options) => {
+globalThis.helperIntegration = { service, native: nativeAgentMock(service), workiq, useVoice: (options) => {
   voiceOptions = options;
   return { status: "idle", activity: "listening", error: null, start: mock.fn(), stop: stopVoice };
 } };
@@ -48,8 +49,8 @@ async function load(path) {
   for (const [, name] of [...source.matchAll(/from "(@\/[^"]+)"/g)]) {
     source = source.replaceAll(`"${name}"`, JSON.stringify(await load(name.slice(2))));
   }
-  source = source.replace(/import \{ DFMEASpecialistMCPService \} from "\.\.\/\.\.\/generated";/,
-    "const DFMEASpecialistMCPService=globalThis.helperIntegration.service;");
+  source = source.replace(/import \{([^}]+)\} from "\.\/agentnode-preview";/,
+    "const {$1}=globalThis.helperIntegration.native;");
   for (const [, name] of [...source.matchAll(/from "(\.[^"]+)"/g)]) {
     source = source.replaceAll(`"${name}"`, JSON.stringify(await load(posix.normalize(posix.join(posix.dirname(path), name)))));
   }
@@ -69,8 +70,10 @@ beforeEach(async () => {
     const value = name === "IS_REACT_ACT_ENVIRONMENT" ? true : name === "window" ? window : name === "getComputedStyle" ? window[name].bind(window) : window[name];
     Object.defineProperty(globalThis, name, { value, writable: true, configurable: true });
   }
-  Object.assign(service, mcpService());
+  Object.assign(service, agentNodeService());
+  delete globalThis.helperIntegration.native.channelError;
   workiq.callWorkIqCopilotChatText.mock.resetCalls();
+  workiq.callWorkIqCopilotChatText.mock.mockImplementation(async () => "Work IQ answer");
   stopVoice.mock.resetCalls();
   const { AiFacilitator } = await import(await load("components/ai-facilitator"));
   const { SAMPLE_DFMEA } = await import(await load("data/dfmea"));
@@ -118,26 +121,29 @@ test("manual chooser has four helpers, defaults to Work IQ, routes typed and voi
   assert.match(document.body.textContent, /Selected helper · ChangeMicrosoft 365 Copilot/);
   await click("Facilitation questions");
   assert.equal(workiq.callWorkIqCopilotChatText.mock.callCount(), 1);
-  for (const [name, method] of [
-    ["Failure Mode Identifier", service.FailureModeMcp],
-    ["Failure Risk Prioritizer", service.RiskMcp],
-    ["Corrective Action Advisor", service.ActionMcp],
+  for (const [name, schemaName] of [
+    ["Failure Mode Identifier", "Default_Failure_Mode_Identifier_20cdd7"],
+    ["Failure Risk Prioritizer", "Default_Failure_Risk_Prioritizer_5a9a6a"],
+    ["Corrective Action Advisor", "Default_Corrective_Action_Advisor_7867b1"],
   ]) {
     await select(name);
     assert.equal(document.querySelector("#ai-search-files"), null);
     assert.doesNotMatch(document.body.textContent, /Work IQ answer/);
     await click("Facilitation questions");
-    const typed = toolCalls(method).at(-1);
-    assert.equal(typed.params.name, "send-message");
-    assert.equal(typed.params.arguments.conversationId, undefined);
+    const [typed, conversation, environment] = service.InvokeAgent.mock.calls.at(-1).arguments;
+    assert.equal(typed.agentId, schemaName);
+    assert.equal(conversation, undefined);
+    assert.equal(environment, "75660de8-d408-e9ce-bc60-84d4f6a30d0b");
     assert.match(document.body.textContent, /Specialist answer/);
     assert.equal(voiceOptions.helperName, name);
     await act(async () => assert.equal(await voiceOptions.askCopilot("Read-only voice question"), "Specialist answer"));
-    const voice = toolCalls(method).at(-1);
-    assert.equal(voice.params.name, "send-message");
-    assert.match(voice.params.arguments.message, /Read-only voice question/);
-    assert.equal(voice.params.arguments.conversationId, CONVERSATION);
-    assert.equal(toolCalls(method).length, 2, "Exactly one specialist invocation per typed/voice question");
+    const [voice, voiceConversation, voiceEnvironment] = service.InvokeAgent.mock.calls.at(-1).arguments;
+    assert.equal(voice.agentId, schemaName);
+    assert.match(voice.prompt, /Read-only voice question/);
+    assert.equal(voiceConversation, CONVERSATION);
+    assert.equal(voiceEnvironment, environment);
+    assert.equal(service.InvokeAgent.mock.calls.filter(({ arguments: [body] }) => body.agentId === schemaName).length,
+      2, "Exactly one specialist invocation per typed/voice question");
   }
   assert.equal(workiq.callWorkIqCopilotChatText.mock.callCount(), 1);
   assert.equal(stopVoice.mock.callCount(), 7); // Four typed starts plus three switches.
@@ -150,10 +156,10 @@ test("new conversation resets history/output and clarification never becomes an 
   assert.equal(addChain.mock.callCount(), 0);
   await click("New conversation");
   assert.doesNotMatch(document.body.textContent, /Specialist answer/);
-  Object.assign(service, mcpService(async () => toolResult(
-    '[{"failureMode":"Signal lost","effect":"Monitoring delayed","cause":"Contact fault","rationale":"Review contact design"}]', NEXT_CONVERSATION)));
+  service.InvokeAgent = mock.fn(async () => agentNodeReply(
+    '[{"failureMode":"Signal lost","effect":"Monitoring delayed","cause":"Contact fault","rationale":"Review contact design"}]', NEXT_CONVERSATION));
   await click("Suggest failure modes");
-  assert.equal(toolCalls(service.FailureModeMcp)[0].params.arguments.conversationId, undefined);
+  assert.equal(service.InvokeAgent.mock.calls[0].arguments[1], undefined);
   const apply = [...document.querySelectorAll("button")].find((item) => item.textContent.includes("Add to failure network"));
   assert.ok(apply);
   await act(async () => apply.click());
@@ -163,9 +169,80 @@ test("new conversation resets history/output and clarification never becomes an 
 
 test("specialist failure stays visible and never invokes Work IQ fallback", async () => {
   await select("Failure Risk Prioritizer");
-  service.RiskMcp = mock.fn(async () => ({ success: false, error: "private details" }));
+  service.InvokeAgent = mock.fn(async () => ({ success: false, error: "private details" }));
   await click("Challenge ratings");
-  assert.match(document.body.textContent, /selected helper couldn't complete/i);
+  assert.match(document.body.textContent, /New conversation required/);
   assert.doesNotMatch(document.body.textContent, /private details/);
   assert.equal(workiq.callWorkIqCopilotChatText.mock.callCount(), 0);
+});
+
+test("typed specialist progress accurately shows the three-minute completion limit", async () => {
+  let finish;
+  service.InvokeAgent = mock.fn(() => new Promise((resolve) => { finish = resolve; }));
+  await select("Corrective Action Advisor");
+  await click("Facilitation questions");
+  assert.match(document.body.textContent, /This can take up to three minutes/);
+  assert.doesNotMatch(document.body.textContent, /This can take up to 30 seconds/);
+  await act(async () => finish(agentNodeReply()));
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 5)));
+  assert.match(document.body.textContent, /Specialist answer/);
+});
+
+test("fixed channel reason is unmissable in the visible error title and code, not just its description", async () => {
+  await select("Corrective Action Advisor");
+  for (const reason of ["missing", "protected", "missed", "restore", "handshake"]) {
+    globalThis.helperIntegration.native.channelError =
+      new globalThis.helperIntegration.native.AgentNodeTransportError("connection", "A fixed safe channel diagnostic.", reason);
+    await click("Facilitation questions");
+    const title = [...document.querySelectorAll("p")].find((node) =>
+      node.textContent === `Native channel unavailable [${reason}]`);
+    assert.ok(title);
+    assert.equal(title.classList.contains("font-medium"), true);
+    assert.match(document.body.textContent, new RegExp(`Code: channel/${reason}`));
+    await click("New conversation");
+  }
+});
+
+test("an ambiguous specialist turn hides retry/regenerate, blocks moves and cached refetch until explicit reset", async () => {
+  await select("Corrective Action Advisor");
+  await click("Facilitation questions");
+  service.InvokeAgent = mock.fn(async () => { throw new Error("private upstream failure"); });
+  await click("Regenerate");
+  assert.match(document.body.textContent, /New conversation required/);
+  assert.match(document.body.textContent, /upstream run may still be active/);
+  assert.doesNotMatch(document.body.textContent, /private upstream failure/);
+  const labels = () => [...document.querySelectorAll("button")].map((button) => button.textContent.trim());
+  assert.equal(labels().includes("Try again"), false);
+  assert.equal(labels().includes("Regenerate"), false);
+  assert.equal([...document.querySelectorAll("button")].find((button) => button.textContent.trim() === "Facilitation questions").disabled, true);
+  await act(async () => { await client.refetchQueries({ type: "active" }); });
+  assert.equal(service.InvokeAgent.mock.callCount(), 1);
+  await click("New conversation");
+  Object.assign(service, agentNodeService());
+  await click("Facilitation questions");
+  assert.match(document.body.textContent, /Specialist answer/);
+  assert.equal(service.InvokeAgent.mock.callCount(), 1);
+  assert.equal(service.InvokeAgent.mock.calls[0].arguments[1], undefined);
+});
+
+test("proven pre-submit native errors keep Try again and the same turn can succeed", async () => {
+  await select("Corrective Action Advisor");
+  globalThis.helperIntegration.native.channelError =
+    new globalThis.helperIntegration.native.AgentNodeTransportError("connection", "No native request was sent.", "missing");
+  await click("Facilitation questions");
+  assert.equal(service.InvokeAgent.mock.callCount(), 0);
+  delete globalThis.helperIntegration.native.channelError;
+  await click("Try again");
+  assert.match(document.body.textContent, /Specialist answer/);
+  assert.equal(service.InvokeAgent.mock.callCount(), 1);
+});
+
+test("Work IQ keeps its existing Try again action after failure", async () => {
+  workiq.callWorkIqCopilotChatText.mock.mockImplementationOnce(async () => { throw new Error("private Work IQ failure"); });
+  await click("Facilitation questions");
+  assert.doesNotMatch(document.body.textContent, /private Work IQ failure|New conversation required/);
+  await click("Try again");
+  assert.match(document.body.textContent, /Work IQ answer/);
+  assert.equal(workiq.callWorkIqCopilotChatText.mock.callCount(), 2);
+  assert.equal(service.InvokeAgent.mock.callCount(), 0);
 });
