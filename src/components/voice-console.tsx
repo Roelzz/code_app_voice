@@ -10,7 +10,7 @@ const ACTIVITY: Record<RealtimeVoiceActivity, { title: string; detail: string }>
   listening: { title: "Listening", detail: "Ask a question about the current workshop focus." },
   hearing: { title: "Hearing you", detail: "Finish your question naturally. No need to press anything." },
   processing: { title: "Processing your question", detail: "Preparing your question for the selected helper." },
-  consulting: { title: "Consulting helper", detail: "The selected helper is answering. The app waits up to 30 seconds." },
+  consulting: { title: "Consulting helper", detail: "The selected helper is answering." },
   speaking: { title: "Voice playback active", detail: "Azure Realtime is playing speech from the selected helper's answer." },
 };
 
@@ -23,10 +23,11 @@ interface VoiceConsoleProps {
   disabled: boolean;
   onStart: () => void;
   onStop: () => void;
+  helperTimeoutMs: number;
   helperName?: string;
 }
 
-export function VoiceConsole({ status, activity, error, focus, step, disabled, onStart, onStop, helperName = "Microsoft 365 Copilot" }: VoiceConsoleProps) {
+export function VoiceConsole({ status, activity, error, focus, step, disabled, onStart, onStop, helperTimeoutMs, helperName = "Microsoft 365 Copilot" }: VoiceConsoleProps) {
   const [open, setOpen] = useState(false);
   const active = status !== "idle";
   const state = status === "idle" ? (error ? "error" : "idle") : status === "connecting" ? "connecting" : activity;
@@ -78,7 +79,9 @@ export function VoiceConsole({ status, activity, error, focus, step, disabled, o
           </div>
           <div role="status" aria-live="polite" aria-atomic="true" className="relative min-h-20 px-4 text-center">
             <p className="text-xl font-semibold tracking-tight">{copy.title}</p>
-            <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">{copy.detail}</p>
+            <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+              {copy.detail}{status === "connected" && activity === "consulting" && ` The app waits up to ${helperTimeoutMs / 1000} seconds.`}
+            </p>
           </div>
         </div>
 

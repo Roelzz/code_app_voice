@@ -76,11 +76,13 @@ export function useRealtimeVoice({
   requestToken,
   askCopilot,
   onError,
+  helperTimeoutMs,
   helperName = "Microsoft 365 Copilot",
 }: {
   requestToken: () => Promise<RealtimeVoiceToken>;
   askCopilot: (question: string) => Promise<string>;
   onError: (message: string) => void;
+  helperTimeoutMs: number;
   helperName?: string;
 }) {
   const [status, setStatus] = useState<RealtimeVoiceStatus>("idle");
@@ -287,8 +289,8 @@ export function useRealtimeVoice({
         pending = request;
         setActivity("consulting");
         run.toolTimer = setTimeout(() => {
-          fail("The helper did not answer within the app's 30-second limit. Try a shorter question.");
-        }, 30_000);
+          fail(`The helper did not answer within the app's ${helperTimeoutMs / 1000}-second limit. Try a shorter question.`);
+        }, helperTimeoutMs);
         void (async () => {
           let output: string;
           try {
@@ -351,7 +353,7 @@ export function useRealtimeVoice({
             : "Realtime voice couldn't connect. Check the app network policy and try again.";
       fail(message);
     }
-  }, [requestToken, stop, helperName]);
+  }, [requestToken, stop, helperName, helperTimeoutMs]);
 
   useEffect(() => cleanup, [cleanup]);
 

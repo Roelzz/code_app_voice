@@ -6,6 +6,8 @@ import ts from "typescript";
 import { Window } from "happy-dom";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
+import { CONVERSATION, mcpService, toolCalls, toolResult } from "./mcp-fixture.mjs";
+import { agentNodeReply, agentNodeService, nativeAgentMock } from "./agentnode-fixture.mjs";
 
 async function loadHook(path, imports = {}) {
   let source = await readFile(new URL(path, import.meta.url), "utf8");
@@ -21,6 +23,30 @@ const { useRealtimeVoice } = await import(await loadHook("../src/hooks/use-realt
   "@/hooks/use-voice": voiceModule,
 }));
 const { useDictation, useSpeechReader } = await import(voiceModule);
+const helperMcp = mcpService();
+const helperNativeService = agentNodeService();
+const helperWorkiq = {
+  WORKIQ_HOST_TIMEOUT_MS: 30_000,
+  callWorkIqCopilotChatText: mock.fn(async () => "Work IQ answer"),
+  callWorkIqCopilotChatItems: mock.fn(async () => []),
+  WorkIqConnectorError: class extends Error {},
+  WorkIqResponseError: class extends Error {},
+};
+globalThis.realtimeHelperBoundaries = {
+  mcp: helperMcp, native: nativeAgentMock(helperNativeService), workiq: helperWorkiq,
+};
+const helperSource = await readFile(new URL("../src/connectors/dfmea-helpers.ts", import.meta.url), "utf8");
+const helperCompiled = ts.transpileModule(helperSource, {
+  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+}).outputText
+  .replace(/import \{ DFMEASpecialistMCPService \} from "\.\.\/\.\.\/generated";/,
+    "const DFMEASpecialistMCPService=globalThis.realtimeHelperBoundaries.mcp;")
+  .replace(/import \{([^}]+)\} from "\.\/agentnode-transport";/,
+    "const {$1}=globalThis.realtimeHelperBoundaries.native;")
+  .replace(/import \{([\s\S]*?)\} from "@\/connectors\/workiq-copilot-chat";/,
+    "const {$1}=globalThis.realtimeHelperBoundaries.workiq;");
+const { HelperSession } = await import(`data:text/javascript;base64,${Buffer.from(helperCompiled).toString("base64")}`);
+delete globalThis.realtimeHelperBoundaries;
 const token = {
   value: "ephemeral-test-value",
   callsUrl: "https://dfmea-voice-fy27.openai.azure.com/openai/v1/realtime/calls",
@@ -48,6 +74,7 @@ let recognition;
 let window;
 let saved;
 let helperName;
+let helperTimeoutMs;
 let renderHarness;
 
 class Peer {
@@ -83,6 +110,11 @@ beforeEach(async () => {
   errors = [];
   audio = [];
   helperName = "Microsoft 365 Copilot";
+  helperTimeoutMs = 30_000;
+  Object.assign(helperMcp, mcpService());
+  Object.assign(helperNativeService, agentNodeService());
+  helperWorkiq.callWorkIqCopilotChatText.mock.mockImplementation(async () => "Work IQ answer");
+  helperWorkiq.callWorkIqCopilotChatText.mock.resetCalls();
   ask = mock.fn(async () => "Work IQ answer");
   requestToken = mock.fn(async () => token);
   getMicrophone = mock.fn(async () => stream());
@@ -116,6 +148,7 @@ beforeEach(async () => {
   function Harness() {
     current = useRealtimeVoice({
       helperName,
+      helperTimeoutMs,
       requestToken: () => requestToken(),
       askCopilot: (question) => ask(question),
       onError: (message) => errors.push(message),
@@ -143,6 +176,155 @@ test("voice session names its selected specialist and returns that helper's resu
   assert.equal(channel.sent[1].item.output, "Specialist risk assessment");
   assert.equal(channel.sent[2].response.tool_choice, "none");
 });
+
+test("real native helper answer after 30 seconds still reaches voice before the 180-second ceiling", async () => {
+  mock.timers.enable({ apis: ["Date", "setTimeout"], now: new Date("2026-11-11T12:00:00Z") });
+  const reply = deferred();
+  const session = new HelperSession();
+  session.select("risk");
+  session.setTransport("agentnode");
+  helperName = "Failure Risk Prioritizer";
+  helperTimeoutMs = session.timeoutMs;
+  ask = mock.fn((question) => session.text(question));
+  helperNativeService.InvokeAgent = mock.fn(() => reply.promise);
+  try {
+    await act(async () => renderHarness());
+    const channel = await connect();
+    await emit(channel, questionEvent());
+    await emit(channel, { type: "response.done", response: { id: "response-one" } });
+    await act(async () => mock.timers.tick(45_000));
+    assert.equal(current.status, "connected", "Native voice must remain connected while the real helper is answering after 30 seconds");
+    assert.equal(current.activity, "consulting");
+    assert.equal(session.isBusy, true);
+    await act(async () => reply.resolve(agentNodeReply("Native answer after 45 seconds")));
+    assert.equal(channel.sent[1].item.type, "function_call_output");
+    assert.equal(channel.sent[1].item.output, "Native answer after 45 seconds");
+    assert.equal(channel.sent[2].response.tool_choice, "none");
+    assert.equal(helperNativeService.InvokeAgent.mock.callCount(), 1);
+    assert.equal(errors.length, 0);
+  } finally {
+    await act(async () => {
+      current.stop();
+      reply.resolve(agentNodeReply("Late native reply"));
+      await new Promise(setImmediate);
+    });
+  }
+});
+
+for (const route of [
+  { name: "Work IQ", helper: "workiq", transport: "agentnode", timeout: 30_000 },
+  { name: "MCP specialist", helper: "risk", transport: "mcp", timeout: 30_000 },
+  { name: "native specialist", helper: "risk", transport: "agentnode", timeout: 180_000 },
+]) {
+  test(`real ${route.name} voice times out at ${route.timeout / 1000} seconds and keeps its upstream gate until settlement`, async () => {
+    mock.timers.enable({ apis: ["Date", "setTimeout"], now: new Date("2026-11-11T12:00:00Z") });
+    const reply = deferred();
+    const session = new HelperSession();
+    session.select(route.helper);
+    session.setTransport(route.transport);
+    helperName = route.name;
+    helperTimeoutMs = session.timeoutMs;
+    ask = mock.fn((question) => session.text(question));
+    if (route.helper === "workiq") helperWorkiq.callWorkIqCopilotChatText.mock.mockImplementation(() => reply.promise);
+    else if (route.transport === "mcp") Object.assign(helperMcp, mcpService(() => reply.promise));
+    else helperNativeService.InvokeAgent = mock.fn(() => reply.promise);
+    const upstreamCount = () => route.helper === "workiq" ? helperWorkiq.callWorkIqCopilotChatText.mock.callCount()
+      : route.transport === "mcp" ? toolCalls(helperMcp.RiskMcp).length : helperNativeService.InvokeAgent.mock.callCount();
+    const answer = route.helper === "workiq" ? "Late Work IQ answer"
+      : route.transport === "mcp" ? toolResult("Late MCP answer") : agentNodeReply("Late native answer");
+    try {
+      await act(async () => renderHarness());
+      const channel = await connect();
+      await emit(channel, questionEvent());
+      await emit(channel, { type: "response.done", response: { id: "response-one" } });
+      assert.equal(upstreamCount(), 1);
+      await act(async () => mock.timers.tick(route.timeout - 1));
+      assert.equal(current.status, "connected");
+      assert.equal(current.activity, "consulting");
+      assert.equal(session.isBusy, true);
+      await act(async () => mock.timers.tick(1));
+      assert.equal(current.status, "idle");
+      assert.match(errors[0], new RegExp(`app's ${route.timeout / 1000}-second limit`));
+      assert.equal(session.isBusy, true, "Voice timeout cannot cancel an upstream helper operation");
+      await assert.rejects(session.text("No overlapping request"), (error) => error.code === "busy");
+      assert.throws(() => session.setTransport(route.transport === "mcp" ? "agentnode" : "mcp"), (error) => error.code === "busy");
+      assert.equal(upstreamCount(), 1);
+      await act(async () => {
+        reply.resolve(answer);
+        await new Promise(setImmediate);
+      });
+      assert.equal(session.isBusy, false);
+      assert.equal(channel.sent.length, 1, "The timed-out voice channel cannot publish a late helper reply");
+      assert.equal(channel.readyState, "closed");
+      assert.equal(streams[0].getTracks()[0].stop.mock.callCount(), 1);
+    } finally {
+      await act(async () => {
+        current.stop();
+        reply.resolve(answer);
+        await new Promise(setImmediate);
+      });
+    }
+  });
+}
+
+for (const ending of ["stop", "helper switch"]) {
+  test(`real native helper preserves no-overlap after ${ending} and cannot inject a late reply into restarted voice`, async () => {
+    mock.timers.enable({ apis: ["Date", "setTimeout"], now: new Date("2026-11-11T12:00:00Z") });
+    const reply = deferred();
+    const session = new HelperSession();
+    session.select("risk");
+    session.setTransport("agentnode");
+    helperName = "Failure Risk Prioritizer";
+    helperTimeoutMs = session.timeoutMs;
+    ask = mock.fn((question) => session.text(question));
+    const oldInvocation = mock.fn(() => reply.promise);
+    helperNativeService.InvokeAgent = oldInvocation;
+    try {
+      await act(async () => renderHarness());
+      const oldChannel = await connect();
+      await emit(oldChannel, questionEvent());
+      const oldEvent = oldChannel.onmessage;
+      await act(async () => current.stop());
+      if (ending === "helper switch") {
+        session.select("actions");
+        helperName = "Corrective Action Advisor";
+        helperTimeoutMs = session.timeoutMs;
+      }
+      await act(async () => renderHarness());
+      const newChannel = await connect();
+      await emit(newChannel, questionEvent("overlap"));
+      await emit(newChannel, { type: "response.done", response: { id: "response-overlap" } });
+      assert.match(newChannel.sent[1].item.output, /could not answer/);
+      assert.equal(oldInvocation.mock.callCount(), 1, "Restarting voice cannot dispatch while the previous helper is pending");
+      assert.equal(session.isBusy, true);
+      assert.throws(() => session.setTransport("mcp"), (error) => error.code === "busy");
+      await act(async () => {
+        reply.resolve(agentNodeReply("Late old-session answer"));
+        await new Promise(setImmediate);
+        oldEvent({ data: JSON.stringify({ type: "response.done", response: { id: "response-one" } }) });
+      });
+      assert.equal(session.isBusy, false);
+      assert.equal(oldChannel.sent.length, 1);
+      assert.equal(newChannel.sent.length, 3);
+      assert.doesNotMatch(JSON.stringify(newChannel.sent), /Late old-session answer/);
+      helperNativeService.InvokeAgent = mock.fn(async () => agentNodeReply("Fresh current-session answer"));
+      await emit(newChannel, questionEvent("fresh"));
+      await emit(newChannel, { type: "response.done", response: { id: "response-fresh" } });
+      assert.equal(newChannel.sent.at(-2).item.type, "function_call_output");
+      assert.equal(newChannel.sent.at(-2).item.output, "Fresh current-session answer");
+      assert.equal(helperNativeService.InvokeAgent.mock.callCount(), 1);
+      const [body, conversationId] = helperNativeService.InvokeAgent.mock.calls[0].arguments;
+      assert.equal(body.agentId, ending === "helper switch" ? "Default_Corrective_Action_Advisor_7867b1" : "Default_Failure_Risk_Prioritizer_5a9a6a");
+      assert.equal(conversationId, ending === "helper switch" ? undefined : CONVERSATION);
+    } finally {
+      await act(async () => {
+        current.stop();
+        reply.resolve(agentNodeReply("Late old-session answer"));
+        await new Promise(setImmediate);
+      });
+    }
+  });
+}
 
 afterEach(async () => {
   await act(async () => root.unmount());
@@ -269,6 +451,8 @@ test("unmount cancels setup and releases a late permission result", async () => 
 
 test("setup timeout cancels token completion and releases microphone", async () => {
   mock.timers.enable({ apis: ["setTimeout"] });
+  helperTimeoutMs = 180_000;
+  await act(async () => renderHarness());
   const pendingToken = deferred();
   requestToken = () => pendingToken.promise;
   let starting;

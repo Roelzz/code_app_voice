@@ -8,6 +8,7 @@ import { agentNodeReply, agentNodeService, nativeAgentMock } from "./agentnode-f
 const service = agentNodeService();
 const mcp = mcpService();
 const workiq = {
+  WORKIQ_HOST_TIMEOUT_MS: 30_000,
   callWorkIqCopilotChatText: mock.fn(async () => "Work IQ answer"),
   callWorkIqCopilotChatItems: mock.fn(async () => [{ action: "Test", type: "Detection", rationale: "Evidence" }]),
   WorkIqConnectorError: class extends Error {},

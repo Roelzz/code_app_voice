@@ -125,7 +125,7 @@ The user must select Start; merely opening the dialog does not acquire the micro
 3. Waits for the helper result and the associated Realtime response completion.
 4. Sends the matching `function_call_output` and creates the speech continuation with `tool_choice: "none"` to avoid repeatedly calling the tool.
 
-Errors are spoken/reported as failures rather than replaced with another helper or transport. Work IQ keeps its **hard 30-second host limit**. Specialist requests use the selected transport's app-side limit: **30 seconds for MCP** initialization/discovery/answer, or **180 seconds for Agent connector** readiness/submission/polling. Automatic query retries are disabled. App-side waits cannot extend host limits or cancel upstream execution.
+Errors are spoken/reported as failures rather than replaced with another helper or transport. Work IQ keeps its **hard 30-second host limit**. Specialist requests use the selected transport's app-side limit: **30 seconds for MCP** initialization/discovery/answer, or **180 seconds for Agent connector** readiness/submission/polling. The realtime tool timer and displayed consulting limit share the session's selected wait budget; voice setup has its own unchanged 30-second deadline. Automatic query retries are disabled. App-side waits cannot extend host limits or cancel upstream execution.
 
 Stop works during setup. Dialog dismissal, helper/transport changes and unmount cleanup close the peer/data channel, stop microphone tracks, clear audio/timers and invalidate late work. Changing helper or transport requires a new explicit Start. The activity display follows real session, tool and audio events; it is not a measured audio-level visualizer.
 

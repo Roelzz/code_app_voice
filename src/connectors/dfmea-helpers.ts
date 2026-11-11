@@ -3,7 +3,7 @@ import { DFMEASpecialistMCPService } from "../../generated";
 import type { McpRequest } from "../../generated/models/DFMEASpecialistMCPModel";
 import {
   callWorkIqCopilotChatItems, callWorkIqCopilotChatText,
-  WorkIqConnectorError, WorkIqResponseError,
+  WORKIQ_HOST_TIMEOUT_MS, WorkIqConnectorError, WorkIqResponseError,
   type WorkIqResponseSchema, type WorkIqSchemaItem,
 } from "@/connectors/workiq-copilot-chat";
 
@@ -181,6 +181,10 @@ export class HelperSession {
     return this.busy;
   }
 
+  get timeoutMs(): number {
+    return this.helperId !== "workiq" && this.transport === "agentnode" ? NATIVE_AGENT_TIMEOUT_MS : WORKIQ_HOST_TIMEOUT_MS;
+  }
+
   get requiresNewConversation(): boolean {
     return this.helperId !== "workiq" && this.transport === "agentnode" && this.nativeTurnUnresolved;
   }
@@ -208,7 +212,7 @@ export class HelperSession {
     this.setBusy(true);
     const generation = this.generation;
     const native = this.helperId !== "workiq" && this.transport === "agentnode";
-    const wait = native ? NATIVE_AGENT_TIMEOUT_MS : 30_000;
+    const wait = this.timeoutMs;
     const turn = { dispatched: false };
     const operation = request(getHelper(this.helperId), Date.now() + wait, turn).finally(() => { this.setBusy(false); });
     let timer: ReturnType<typeof setTimeout> | undefined;

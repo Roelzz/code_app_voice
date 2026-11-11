@@ -399,7 +399,8 @@ function FacilitatorPanel({
   const helper = getHelper(helperId);
   const specialist = helperId !== "workiq";
   const sessionBusy = useSyncExternalStore(session.subscribeBusy, session.getBusySnapshot, session.getBusySnapshot);
-  const waitLabel = specialist && transport === "agentnode" ? "three minutes" : "30 seconds";
+  const helperTimeoutMs = session.timeoutMs;
+  const waitLabel = helperTimeoutMs > WORKIQ_HOST_TIMEOUT_MS ? "three minutes" : "30 seconds";
   const [request, setRequest] = useState<AiRequest | null>(null);
   const [seq, setSeq] = useState(0);
   const [question, setQuestion] = useState("");
@@ -425,6 +426,7 @@ function FacilitatorPanel({
   });
   const realtimeVoice = useRealtimeVoice({
     helperName: helper.name,
+    helperTimeoutMs,
     requestToken:
       requestRealtimeToken ??
       (() => Promise.reject(new WorkIqConnectorError("Realtime voice connector is not configured.", undefined, undefined))),
@@ -637,6 +639,7 @@ function FacilitatorPanel({
         {requestRealtimeToken && (
           <VoiceConsole
             helperName={helper.name}
+            helperTimeoutMs={helperTimeoutMs}
             status={realtimeVoice.status}
             activity={realtimeVoice.activity}
             error={realtimeVoice.error || voiceMessage}

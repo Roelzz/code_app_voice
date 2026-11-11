@@ -10,6 +10,19 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { CONVERSATION, NEXT_CONVERSATION, mcpService, toolCalls, toolResult } from "./mcp-fixture.mjs";
 import { agentNodeReply, agentNodeService, nativeAgentMock } from "./agentnode-fixture.mjs";
 
+async function loadVoiceHook(path, imports = {}) {
+  const source = await readFile(new URL(`../src/hooks/${path}.ts`, import.meta.url), "utf8");
+  const compiled = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  }).outputText.replace(/from "([^"]+)"/g, (_match, name) =>
+    `from ${JSON.stringify(imports[name] ?? import.meta.resolve(name))}`);
+  return `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`;
+}
+const speechHook = await loadVoiceHook("use-voice");
+const { useRealtimeVoice: realUseRealtimeVoice } = await import(await loadVoiceHook("use-realtime-voice", {
+  "@/hooks/use-voice": speechHook,
+}));
+
 const service = agentNodeService();
 const mcp = mcpService();
 const workiq = {
@@ -17,6 +30,7 @@ const workiq = {
   callWorkIqCopilotChatItems: mock.fn(async () => []),
 };
 let voiceOptions;
+let liveVoice;
 const stopVoice = mock.fn();
 const stopSpeaking = mock.fn();
 const speak = mock.fn();
@@ -24,7 +38,9 @@ globalThis.dualTransportIntegration = {
   mcp, native: nativeAgentMock(service), workiq, stopSpeaking, speak,
   useVoice: (options) => {
     voiceOptions = options;
-    return { status: "idle", activity: "listening", error: null, start: mock.fn(), stop: stopVoice };
+    const voice = realUseRealtimeVoice(options);
+    liveVoice = voice;
+    return { ...voice, stop: () => { stopVoice(); voice.stop(); } };
   },
 };
 const modules = new Map();
@@ -104,7 +120,11 @@ beforeEach(async () => {
   await act(async () => root.render(React.createElement(QueryClientProvider, { client },
     React.createElement(AiFacilitator, {
       data, elementId: data.elements[0].id, causeId: data.causes[0].id,
-      onAddFailureChain: addChain, onAddAction: addAction, requestRealtimeToken: async () => ({}),
+      onAddFailureChain: addChain, onAddAction: addAction, requestRealtimeToken: async () => ({
+        value: "ephemeral-test-value",
+        callsUrl: "https://dfmea-voice-fy27.openai.azure.com/openai/v1/realtime/calls",
+        model: "gpt-realtime-2.1",
+      }),
     }))));
 });
 afterEach(async () => {
@@ -206,6 +226,117 @@ test("changing either transport stops voice/read-aloud and remounts output, read
   assert.deepEqual(mcp.RiskMcp.mock.calls.slice(-3).map(({ arguments: [body] }) => body.method),
     ["initialize", "tools/list", "tools/call"]);
   assert.equal(toolCalls(mcp.RiskMcp).at(-1).params.arguments.conversationId, undefined);
+});
+
+test("actual facilitator wires route-specific voice consulting limits and delivers a native answer after 30 seconds", async () => {
+  const peers = [];
+  function boundary(name, value) {
+    saved.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+    Object.defineProperty(globalThis, name, { value, writable: true, configurable: true });
+  }
+  boundary("RTCPeerConnection", class {
+    constructor() {
+      this.connectionState = "new";
+      this.channel = {
+        readyState: "open", sent: [],
+        send(data) { this.sent.push(JSON.parse(data)); },
+        close() { this.readyState = "closed"; },
+      };
+      peers.push(this);
+    }
+    addTrack() {}
+    createDataChannel() { return this.channel; }
+    async createOffer() { return { type: "offer", sdp: "test-offer" }; }
+    async setLocalDescription() {}
+    async setRemoteDescription() {}
+    close() { this.connectionState = "closed"; }
+  });
+  boundary("Audio", class {
+    play = async () => {};
+    pause() {}
+  });
+  boundary("fetch", mock.fn(async () => ({ ok: true, text: async () => "test-answer" })));
+  const microphoneStop = mock.fn();
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true, value: {
+      getUserMedia: mock.fn(async () => ({
+        getAudioTracks: () => [{ stop: microphoneStop }],
+        getTracks: () => [{ stop: microphoneStop }],
+      })),
+    },
+  });
+
+  for (const route of [
+    { helper: "Microsoft 365 Copilot", transport: null, seconds: 30, kind: "workiq" },
+    { helper: "Failure Risk Prioritizer", transport: "MCP", seconds: 30, kind: "mcp" },
+    { helper: "Failure Risk Prioritizer", transport: "Agent connector", seconds: 180, kind: "native" },
+    { helper: "Microsoft 365 Copilot", transport: null, seconds: 30, kind: "workiq" },
+  ]) {
+    await select(route.helper);
+    if (route.transport && button(route.transport).getAttribute("aria-checked") !== "true") await click(route.transport);
+    const pending = deferred();
+    const answerText = `${route.kind} routed voice answer`;
+    const answer = route.kind === "workiq" ? answerText : route.kind === "mcp" ? toolResult(answerText) : agentNodeReply(answerText);
+    if (route.kind === "workiq") workiq.callWorkIqCopilotChatText.mock.mockImplementation(() => pending.promise);
+    else if (route.kind === "mcp") Object.assign(mcp, mcpService(() => pending.promise));
+    else service.InvokeAgent = mock.fn(() => pending.promise);
+    await click("Talk to Copilot");
+    mock.timers.enable({ apis: ["Date", "setTimeout"], now: new Date("2026-11-11T12:00:00Z") });
+    try {
+      await act(async () => {
+        button("Start voice session").click();
+        await new Promise(setImmediate);
+      });
+      const channel = peers.at(-1)?.channel;
+      assert.ok(channel, "The mounted facilitator starts its real WebRTC hook");
+      await act(async () => {
+        channel.onopen();
+        channel.onmessage({ data: JSON.stringify({ type: "session.updated" }) });
+      });
+      assert.match(channel.sent[0].session.instructions, new RegExp(`Selected helper: ${route.helper}`));
+      await act(async () => {
+        channel.onmessage({ data: JSON.stringify({
+          type: "response.function_call_arguments.done", name: "ask_copilot", call_id: "one", response_id: "response-one",
+          arguments: JSON.stringify({ question: "What fails?" }),
+        }) });
+        channel.onmessage({ data: JSON.stringify({ type: "response.done", response: { id: "response-one" } }) });
+        await new Promise(setImmediate);
+      });
+      const dialog = document.querySelector('[role="dialog"]');
+      assert.match(dialog.textContent, new RegExp(`The app waits up to ${route.seconds} seconds\\.`));
+      assert.equal(dialog.querySelector("[data-voice-state]").getAttribute("data-voice-state"), "consulting");
+      await act(async () => {
+        mock.timers.tick(route.kind === "native" ? 45_000 : 15_000);
+        await new Promise(setImmediate);
+      });
+      assert.equal(channel.readyState, "open", `${route.kind} uses the helper deadline, not a hardcoded voice limit`);
+      assert.equal(dialog.querySelector("[data-voice-state]").getAttribute("data-voice-state"), "consulting");
+      await act(async () => {
+        pending.resolve(answer);
+        await new Promise(setImmediate);
+        mock.timers.tick(0);
+      });
+      assert.equal(channel.sent[1].item.type, "function_call_output");
+      assert.equal(channel.sent[1].item.output, answerText);
+      assert.equal(channel.sent[2].response.tool_choice, "none");
+      if (route.kind === "native") {
+        assert.equal(service.InvokeAgent.mock.callCount(), 1);
+        assert.equal(service.InvokeAgent.mock.calls[0].arguments[1], undefined);
+      } else if (route.kind === "mcp") assert.equal(toolCalls(mcp.RiskMcp).length, 1);
+      await act(async () => button("Close").click());
+      assert.equal(channel.readyState, "closed");
+    } finally {
+      await act(async () => {
+        liveVoice?.stop();
+        pending.resolve(answer);
+        await new Promise(setImmediate);
+      });
+      mock.timers.reset();
+    }
+  }
+  assert.equal(peers.length, 4);
+  assert.equal(globalThis.fetch.mock.callCount(), 4);
+  assert.equal(microphoneStop.mock.callCount(), 4);
 });
 
 for (const transport of ["mcp", "agentnode"]) {

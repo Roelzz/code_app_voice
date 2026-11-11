@@ -311,6 +311,7 @@ for (const stage of ["connections", "POST", "GET"]) {
 
 async function createHelperSession() {
   const workiqUrl = encode(`
+    export const WORKIQ_HOST_TIMEOUT_MS = 30000;
     export const callWorkIqCopilotChatText = async () => "Work IQ recovered";
     export const callWorkIqCopilotChatItems = async () => [];
     export class WorkIqConnectorError extends Error {}
