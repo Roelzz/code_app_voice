@@ -237,7 +237,12 @@ function speechParts(title: string, result: AiResult): string[] {
 /** User-safe explanation of a failed facilitator request; never shows upstream text. */
 function describeAiError(error: unknown): { title: string; description: string; code: string } {
   if (error instanceof HelperError) {
-    return { title: "The selected helper couldn't complete this request", description: error.message, code: error.code };
+    return {
+      title: error.channelReason ? `Native channel unavailable [${error.channelReason}]`
+        : error.requiresNewConversation ? "New conversation required" : "The selected helper couldn't complete this request",
+      description: error.message,
+      code: error.channelReason ? `channel/${error.channelReason}` : error.code,
+    };
   }
   if (error instanceof WorkIqTimeoutError) {
     return {
@@ -429,6 +434,7 @@ function FacilitatorPanel({
     retry: false,
   });
   const busy = query.isFetching;
+  const newConversationRequired = specialist && session.requiresNewConversation;
 
   useEffect(() => {
     if (!busy || request === null) return;
@@ -446,7 +452,7 @@ function FacilitatorPanel({
   }, [realtimeVoice.status, readAloud, request, busy, query.isSuccess, query.data, query.dataUpdatedAt, speak]);
 
   function start(move: MoveId, text = "") {
-    if (busy || voiceQuestion.isPending) return;
+    if (busy || voiceQuestion.isPending || session.requiresNewConversation) return;
     realtimeVoice.stop();
     stopSpeaking();
     const next = seq + 1;
@@ -529,7 +535,7 @@ function FacilitatorPanel({
       <div className="grid grid-cols-2 gap-2" role="group" aria-label="Facilitator moves">
         {MOVES.map((move) => {
           const Icon = move.icon;
-          const disabled = busy || voiceQuestion.isPending || (move.needsChain && !chain);
+          const disabled = busy || voiceQuestion.isPending || newConversationRequired || (move.needsChain && !chain);
           return (
             <Button
               key={move.id}
@@ -563,7 +569,7 @@ function FacilitatorPanel({
           autoComplete="off"
         />
         <DictationButton label="a question for the facilitator" value={question} onChange={setQuestion} disabled={busy} />
-        <Button type="submit" size="icon" disabled={busy || voiceQuestion.isPending || !question.trim()} aria-label="Ask the facilitator">
+        <Button type="submit" size="icon" disabled={busy || voiceQuestion.isPending || newConversationRequired || !question.trim()} aria-label="Ask the facilitator">
           <SendHorizontal aria-hidden="true" />
         </Button>
       </form>
@@ -620,8 +626,8 @@ function FacilitatorPanel({
         <p role="status" aria-live="polite" className="text-xs text-muted-foreground">
           {busy
             ? slow
-              ? `Still working with ${helper.name}. The app waits up to 30 seconds.`
-              : `Asking ${helper.name}. This can take up to 30 seconds.`
+              ? `Still working with ${helper.name}. The app waits up to ${helper.id === "workiq" ? "30 seconds" : "three minutes"}.`
+              : `Asking ${helper.name}. This can take up to ${helper.id === "workiq" ? "30 seconds" : "three minutes"}.`
             : ""}
         </p>
 
@@ -659,10 +665,10 @@ function FacilitatorPanel({
                       {reader.speaking ? "Stop reading" : "Read aloud"}
                     </Button>
                   )}
-                  <Button type="button" variant="ghost" size="xs" onClick={() => query.refetch()}>
+                  {!newConversationRequired && <Button type="button" variant="ghost" size="xs" onClick={() => query.refetch()}>
                     <RotateCcw aria-hidden="true" />
                     Regenerate
-                  </Button>
+                  </Button>}
                 </div>
               )}
             </div>
@@ -690,10 +696,10 @@ function FacilitatorPanel({
                       className="py-6"
                       action={
                         <div className="flex flex-col items-center gap-2">
-                          <Button type="button" variant="outline" size="sm" onClick={() => query.refetch()}>
+                          {!newConversationRequired && <Button type="button" variant="outline" size="sm" onClick={() => query.refetch()}>
                             <RotateCcw aria-hidden="true" />
                             Try again
-                          </Button>
+                          </Button>}
                           <span className="text-xs text-muted-foreground">Code: {info.code}</span>
                         </div>
                       }

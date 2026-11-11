@@ -8,6 +8,8 @@ The app brings the AIAG-VDA seven-step workflow, product structure, failure chai
 
 > **Release status:** the four-helper chooser, dedicated animated voice console and FRE specialist MCP integration are deployed to the CAPE app at commit `7520e85d4c4ae27539f5611c611e03a4817493de`, also pushed to this GitHub repository. The user confirmed all three typed specialist answers in the hosted preview, then confirmed live text, spoken answers and microphone release. This is user-observed acceptance, not an independently captured browser/network trace. The operational handover records exact evidence and rollback.
 
+> **This branch is an Agent Node preview, not the live release.** The user reported that the hosted preview works. This report does not establish independent verification of all three specialists, voice or latency. No live switch has been authorized; the deployed app still uses MCP.
+
 ## Contents
 
 - [Workshop experience](#workshop-experience)
@@ -65,8 +67,8 @@ flowchart TB
     App --> Select["Selected helper<br/>Manual choice · isolated conversation"]
     Select --> IQ["Generated Work IQ connector"]
     IQ --> Copilot["Microsoft 365 Copilot<br/>Answers and optional M365 evidence"]
-    Select --> Studio["Generated Specialist MCP connector<br/>Entra delegated user · bounded SSE → JSON"]
-    Studio --> Specialists["Managed_App_Deploy_FRE<br/>Failure Mode Identifier<br/>Failure Risk Prioritizer<br/>Corrective Action Advisor"]
+    Select --> Native["Agent Node preview<br/>Authenticated POST · 202 polling"]
+    Native --> Specialists["Managed_App_Deploy_FRE<br/>Failure Mode Identifier<br/>Failure Risk Prioritizer<br/>Corrective Action Advisor"]
     App --> BrokerConn["Generated broker connector"]
     BrokerConn --> Broker["Azure Function<br/>Entra Easy Auth"]
     Broker -->|"Managed identity"| Azure["Azure OpenAI Realtime"]
@@ -80,7 +82,7 @@ flowchart TB
     classDef azure fill:#E3F4EE,stroke:#32765A,color:#193D30
     class Team person
     class App,Select app
-    class Host,IQ,Copilot,BrokerConn,Studio,Specialists m365
+    class Host,IQ,Copilot,BrokerConn,Native,Specialists m365
     class Broker,Azure azure
 ```
 
@@ -88,7 +90,7 @@ flowchart TB
 
 - **React app:** holds the workshop state, constructs bounded prompts, validates connector results and renders escaped text.
 - **Work IQ / Microsoft 365 Copilot:** supplies the answers and, when requested, searches the signed-in user's Microsoft 365 context.
-- **Copilot Studio specialists:** alternatively supply answers through their supported MCP publishing channels and a generated custom-connector binding, using their own published instructions and knowledge. The app stays in `Managed_App_Deploy`; only the specialist agents are in `Managed_App_Deploy_FRE`. The app does not edit or republish them.
+- **Copilot Studio specialists:** this preview invokes the existing published agents through Agent Node and authenticated completion polling. The deployed release instead uses their MCP publishing channels and a generated custom connector. The app stays in `Managed_App_Deploy`; only the specialist agents are in `Managed_App_Deploy_FRE`. The app does not edit or republish them.
 - **Azure Realtime:** handles conversational speech, detects turns and calls `ask_copilot`, which is routed to the selected helper; it is not an independent DFMEA answer source.
 - **Azure Function broker:** authenticates the caller and mints short-lived Realtime client credentials with managed identity.
 - **Managed Runtime host:** supplies identity and connector execution, governs access and serves the enforced CSP.
@@ -129,7 +131,7 @@ The initial dataset is a fictional wearable vital-signs patch. State is in brows
 
 ## Choose a specialist helper
 
-> **Integration status:** deployed and user-verified. All three user-published FRE agents answered direct questions and follow-ups, all three returned typed answers through the hosted preview's generated MCP connector, and the user confirmed selected-specialist text, voice playback and microphone release in the live app. The incompatible standard Studio action is removed.
+> **Live MCP integration:** all three user-published FRE agents answered direct questions and follow-ups and returned typed answers through the hosted MCP preview; the user confirmed selected-specialist text, voice playback and microphone release in the live app. The separate Agent Node preview has only the user-reported success described above.
 
 Select **Selected helper · Change** in the facilitator panel to open the compact chooser. The choice applies to both the typed facilitator controls and the realtime voice console.
 
@@ -142,23 +144,27 @@ Select **Selected helper · Change** in the facilitator panel to open the compac
 
 These are user-published CAPE Copilot Studio agents—not prompts impersonating agents. They use the GitHub Copilot harness, which the standard `ExecuteCopilotAsyncV2` action explicitly rejects. That binding has been removed, not bypassed.
 
-| Specialist | Published FRE schema | Generated operation |
+| Specialist | Published FRE schema | Live MCP operation |
 |---|---|---|
 | Failure Mode Identifier | `Default_Failure_Mode_Identifier_20cdd7` | `FailureModeMcp` |
 | Failure Risk Prioritizer | `Default_Failure_Risk_Prioritizer_5a9a6a` | `RiskMcp` |
 | Corrective Action Advisor | `Default_Corrective_Action_Advisor_7867b1` | `ActionMcp` |
 
-Microsoft's preview **MCP client** publishing channel supports this harness in early-release environments. The fixed endpoints are under tenant `efb073bb-283b-4757-a252-22af963721bc`, agent environment `75660de8-d408-e9ce-bc60-84d4f6a30d0b`. A separate narrow custom connector lives beside the app in `28207d24-1fb8-e2ed-ba6e-180550d63611`; the browser never calls Power Platform directly, and no new CSP origin is required. See [MCP/A2A setup](https://learn.microsoft.com/en-us/microsoft-copilot-studio/agents-experience/publication-channels-mcp-agent-to-agent).
+**Preview transport:** specialist requests use the generated Agent Node binding and the existing authenticated host channel. An HTTP 202 acknowledgement is followed by bounded GET polling on that channel; completion URLs and conversation continuity are validated. The browser does not call Power Platform directly. An ambiguous post-submission failure requires an explicit new conversation, which does not cancel an upstream run.
+
+**Preview-only workaround:** channel interception and raw host HTTP polling rely on undocumented SDK and host internals; they are not a supported production contract. [Microsoft's connector guidance](https://learn.microsoft.com/en-us/microsoft-365/copilot-managed-runtime/developer/apps/connect-to-data?view=o365-worldwide#how-connectors-work-in-apps) directs app code to generated services rather than raw connector HTTP requests. Do not deploy this workaround as-is.
+
+**Live MCP transport:** Microsoft's preview **MCP client** publishing channel supports this harness in early-release environments. The fixed endpoints are under tenant `efb073bb-283b-4757-a252-22af963721bc`, agent environment `75660de8-d408-e9ce-bc60-84d4f6a30d0b`. A separate narrow custom connector lives beside the app in `28207d24-1fb8-e2ed-ba6e-180550d63611`; the browser never calls Power Platform directly, and no new CSP origin is required. See [MCP/A2A setup](https://learn.microsoft.com/en-us/microsoft-copilot-studio/agents-experience/publication-channels-mcp-agent-to-agent).
 
 **Conversation boundaries:** switching helpers ends voice/read-aloud, clears the previous output and starts a separate conversation. **New conversation** does the same for the current helper. Conversation IDs and selection live only in session memory. No previous helper history is copied to another agent; current workshop context is sent with each new question. A timed-out upstream operation may still finish; the app prevents overlapping calls and ignores obsolete results. There is no automatic routing or fallback to Work IQ.
 
 The Microsoft 365 file-search toggle belongs only to Work IQ and is hidden for specialists. Specialist agents retain their own knowledge/tool behavior. Their prose and clarification questions are displayed as text; only complete, validated failure-mode/action JSON can produce an explicit **Add** control. No ratings are changed automatically, and suggestions retain the existing AI provenance/human-review flow.
 
-The [connector source](specialist-connector/) pins three HTTPS paths and the `send-message` tool. Its supported C# transport completes MCP initialization, sends `Accept: application/json, text/event-stream`, and wraps the bounded SSE response as typed JSON. The app discovers the tool once per selected conversation, correlates unique JSON-RPC IDs, rejects duplicate/malformed results, validates the returned conversation GUID and combines ordered response text once. It accepts the documented structured envelope or a JSON envelope in one MCP text block. Errors, including HTTP-200 environment-policy failures, never become suggestions.
+In the live release, the [connector source](specialist-connector/) pins three HTTPS paths and the `send-message` tool. Its supported C# transport completes MCP initialization, sends `Accept: application/json, text/event-stream`, and wraps the bounded SSE response as typed JSON. The live app discovers the tool once per selected conversation, correlates unique JSON-RPC IDs, rejects duplicate/malformed results, validates the returned conversation GUID and combines ordered response text once. It accepts the documented structured envelope or a JSON envelope in one MCP text block. Errors, including HTTP-200 environment-policy failures, never become suggestions.
 
 The dedicated single-tenant OAuth client requests only delegated `MCS.InvokeAsMCP`; no application permission, A2A scope or tenant-wide consent was added. Secret material is injected privately into the platform, never committed. The initial commissioning credential is short-lived and must be rotated before its recorded expiry; see [handover](docs/HANDOVER.md). [API properties template](specialist-connector/apiProperties.template.json) deliberately omits the secret.
 
-**Verification boundary:** discovery, code generation and mocked routing tests do not establish hosted agent invocation. The handover records the current hosted acceptance evidence and exact deployed commit.
+**Verification boundary:** discovery, code generation and mocked routing tests do not establish hosted agent invocation. The handover records historical hosted acceptance evidence and the exact deployed commit; the latest Agent Node success is user-reported.
 
 ## Talk to Copilot
 
@@ -188,7 +194,7 @@ sequenceDiagram
     participant UI as Voice console
     participant Broker as Authenticated broker
     participant RT as Azure Realtime
-    participant IQ as Selected helper (Work IQ or MCP specialist)
+    participant IQ as Selected helper (Work IQ or Agent Node specialist)
     rect rgb(233, 241, 252)
         User->>UI: Start voice session
         UI->>Broker: Generated connector token request
@@ -216,7 +222,7 @@ sequenceDiagram
 
 The session-level tool choice requires a tool call for questions. After the selected helper's result, the response-level choice explicitly permits speech without another tool call. This prevents a repeated-tool loop. Call IDs are deduplicated, overlapping tool calls are rejected, and late results cannot resurrect a stopped session. The console identifies the answer source; switching helpers requires a new explicit voice Start.
 
-Work IQ has a **hard 30-second host limit**. Specialist initialization, discovery and the answer share an app-side 30-second wait; the connector does not bypass host limits. Automatic retries are disabled. If the selected helper fails, voice reports the failure rather than substituting another agent or a model-generated answer.
+Work IQ has a **hard 30-second host limit**. In this preview, Agent Node setup and polling have an app-side three-minute deadline; this does not cancel upstream work. The deployed MCP release uses a 30-second app-side wait. Automatic retries are disabled. If the selected helper fails, voice reports the failure rather than substituting another agent or a model-generated answer.
 
 ### Existing speech controls
 
@@ -229,12 +235,12 @@ These features share audio ownership: starting dictation or read-aloud stops rea
 ## Authentication and security
 
 1. The user signs into the target Managed Runtime host with their CAPE identity.
-2. The Work IQ, Specialist MCP and broker bindings are generated for the target tenant/environment, not copied from the original MSIT app.
+2. The Work IQ, Agent Node, Specialist MCP and broker bindings are generated for the target tenant/environment, not copied from the original MSIT app. The live release uses Specialist MCP; this branch routes specialists through Agent Node.
 3. The custom broker connector uses Entra authentication. Easy Auth rejects anonymous broker calls with **401**.
 4. The Function's managed identity has **Cognitive Services OpenAI User** on the Azure AI resource. Azure local/API-key authentication is disabled.
 5. The broker returns a short-lived client credential. The browser validates its expiration, model and exact signaling URL before use.
 6. The token exists only transiently in memory: no browser storage, source, logs or retained query cache. The acquisition mutation has `retry: false`, `gcTime: 0` and immediate reset.
-7. Voice questions go through the selected Work IQ/MCP binding using the CAPE user's access. No MSIT connection, cross-agent or data fallback is used.
+7. Voice questions use the selected Work IQ or specialist route with the CAPE user's access. No MSIT connection, cross-agent or data fallback is used.
 
 **Untrusted content:** Copilot/connector output is rendered as text, not executable HTML. Suggested rows are validated before entering the model. Raw upstream errors and credentials must never be shown in UI or logs.
 
@@ -310,7 +316,8 @@ It compiles the actual `Script.csx` against the SDK's Newtonsoft assembly and te
 | App ID | `088be080-35da-497a-a83e-0b870c975893` |
 | Native repository ID | `d1d3cd61-ab84-4863-b6e2-720b38eee6eb` |
 | Baseline deployed commit | `6b8ebc262fea43dd98389e67e109a2f3b6eade2a` |
-| Current deployed voice-console commit | `12c6ed88787190bceb77602cde62d5908262f4d0` |
+| Current deployed release | `7520e85d4c4ae27539f5611c611e03a4817493de` |
+| Previous voice-only rollback | `12c6ed88787190bceb77602cde62d5908262f4d0` |
 | Release evidence and rollback | [HANDOVER.md](docs/HANDOVER.md) |
 
 The original MSIT app is left untouched. Migration created a new app and native platform repository, new generated connector bindings and target authentication. It did not copy original sharing, credentials or business data.
@@ -404,8 +411,9 @@ Redeploy a recorded known-good **target** commit through the same native build/d
 | `src/components/ai-facilitator.tsx` | Prompt construction, requests, results and human review actions |
 | `src/components/voice-console.tsx` | Dedicated animated voice dialog |
 | `src/components/helper-chooser.tsx` | Compact accessible four-helper selection dialog |
-| `src/connectors/dfmea-helpers.ts` | FRE helper catalog, generated MCP adapter, validated SSE/conversations and single-flight guard |
-| `specialist-connector/` | Fixed-path MCP OpenAPI, bounded authenticated C# transport and secret-free OAuth template |
+| `src/connectors/dfmea-helpers.ts` | FRE helper catalog, Agent Node routing, conversation validation and single-flight guard |
+| `src/connectors/agentnode-preview.ts`, `shared-sdk-channel.ts` | Preview-only authenticated invocation, polling and SDK channel observation |
+| `specialist-connector/` | Live MCP connector: fixed-path OpenAPI, bounded C# transport and secret-free OAuth template |
 | `src/hooks/use-realtime-voice.ts` | WebRTC lifecycle, activity events and Work IQ tool handoff |
 | `src/hooks/use-voice.ts` | Dictation, speech synthesis and shared audio ownership |
 | `src/connectors/workiq-copilot-chat.ts` | Sole Work IQ transport/parser and typed errors |

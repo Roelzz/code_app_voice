@@ -4,11 +4,13 @@
  */
 
 // Models
+export * as AgentsModel from './models/AgentsModel';
 export * as DFMEARealtimeVoiceBrokerModel from './models/DFMEARealtimeVoiceBrokerModel';
 export * as DFMEASpecialistMCPModel from './models/DFMEASpecialistMCPModel';
 export * as WorkIQCopilotMCPModel from './models/WorkIQCopilotMCPModel';
 
 // Services
+export * from './services/AgentsService';
 export * from './services/DFMEARealtimeVoiceBrokerService';
 export * from './services/DFMEASpecialistMCPService';
 export * from './services/WorkIQCopilotMCPService';
