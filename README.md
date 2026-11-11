@@ -44,6 +44,15 @@ flowchart TB
     Broker -->|"Managed identity: mint client credential"| Realtime["Azure OpenAI Realtime"]
     Broker -->|"Short-lived credential"| App
     App <-->|"Direct WebRTC: audio and tool events"| Realtime
+    classDef person fill:#F2EAFE,stroke:#7854A3,color:#38234F
+    classDef app fill:#FFF0CD,stroke:#94620D,color:#553600
+    classDef m365 fill:#E3EFFC,stroke:#31669C,color:#173A5D
+    classDef azure fill:#E3F4EE,stroke:#32765A,color:#193D30
+    class Person person
+    class App,Route app
+    class Copilot,Studio m365
+    class Broker,Realtime azure
+    style Host fill:#E3EFFC,stroke:#31669C,color:#173A5D
 ```
 
 Work IQ and Copilot Studio are **alternative answer sources**, not an agent-to-agent chain. The app does not silently substitute another helper. Realtime is instructed to call `ask_copilot` for user questions, wait for the selected helper and speak its answer rather than invent a separate DFMEA answer.
@@ -61,21 +70,27 @@ sequenceDiagram
     participant Broker as Authenticated broker
     participant RT as Azure Realtime
     participant Helper as Selected helper
-    User->>App: Start voice session
-    App->>Broker: Token request through generated connector
-    Broker->>RT: Mint client credential using managed identity
-    RT-->>Broker: Short-lived credential
-    Broker-->>App: Credential and signaling details
-    App->>RT: Establish WebRTC session
-    User->>RT: Speak a question over WebRTC
-    RT->>App: ask_copilot(question)
-    App->>Helper: Generated connector call with workshop context
-    Note over App,Helper: Work IQ OR the selected Studio specialist
-    Helper-->>App: Answer or explicit failure
-    App->>RT: Matching tool result when ready
-    RT-->>User: Speak the helper answer or report failure
-    User->>App: Stop or close the console
-    App->>RT: Close session and release microphone
+    rect rgb(233, 241, 252)
+        User->>App: Start voice session
+        App->>Broker: Token request through generated connector
+        Broker->>RT: Mint client credential using managed identity
+        RT-->>Broker: Short-lived credential
+        Broker-->>App: Credential and signaling details
+        App->>RT: Establish WebRTC session
+    end
+    rect rgb(255, 244, 218)
+        User->>RT: Speak a question over WebRTC
+        RT->>App: ask_copilot(question)
+        App->>Helper: Generated connector call with workshop context
+        Note over App,Helper: Work IQ OR the selected Studio specialist
+        Helper-->>App: Answer or explicit failure
+        App->>RT: Matching tool result when ready
+        RT-->>User: Speak the helper answer or report failure
+    end
+    rect rgb(231, 245, 235)
+        User->>App: Stop or close the console
+        App->>RT: Close session and release microphone
+    end
 ```
 
 The broker is not an audio relay: the browser connects directly to Azure over WebRTC. The app keeps the credential in memory only. Stop, dialog dismissal and helper changes end the voice session; a helper change requires a new explicit Start.
