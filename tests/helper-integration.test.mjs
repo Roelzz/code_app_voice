@@ -8,6 +8,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { CONVERSATION, NEXT_CONVERSATION, mcpService, toolResult, toolCalls } from "./mcp-fixture.mjs";
+import { agentNodeService, nativeAgentMock } from "./agentnode-fixture.mjs";
 
 const service = mcpService();
 const workiq = {
@@ -16,7 +17,7 @@ const workiq = {
 };
 let voiceOptions;
 const stopVoice = mock.fn();
-globalThis.helperIntegration = { service, workiq, useVoice: (options) => {
+globalThis.helperIntegration = { service, native: nativeAgentMock(agentNodeService()), workiq, useVoice: (options) => {
   voiceOptions = options;
   return { status: "idle", activity: "listening", error: null, start: mock.fn(), stop: stopVoice };
 } };
@@ -50,6 +51,8 @@ async function load(path) {
   }
   source = source.replace(/import \{ DFMEASpecialistMCPService \} from "\.\.\/\.\.\/generated";/,
     "const DFMEASpecialistMCPService=globalThis.helperIntegration.service;");
+  source = source.replace(/import \{([^}]+)\} from "\.\/agentnode-transport";/,
+    "const {$1}=globalThis.helperIntegration.native;");
   for (const [, name] of [...source.matchAll(/from "(\.[^"]+)"/g)]) {
     source = source.replaceAll(`"${name}"`, JSON.stringify(await load(posix.normalize(posix.join(posix.dirname(path), name)))));
   }

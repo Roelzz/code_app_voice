@@ -36,6 +36,14 @@
         "new_5fdfmea_20specialist_20mcp_5fcb638419537c7c20"
       ],
       "dataSets": {}
+    },
+    "cc13d5c4-adbb-43c0-b104-329a022b3fb5": {
+      "id": "/providers/Microsoft.PowerApps/apis/shared_agentnode",
+      "displayName": "Agents",
+      "dataSources": [
+        "agentnode"
+      ],
+      "dataSets": {}
     }
   }
 }

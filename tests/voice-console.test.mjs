@@ -53,7 +53,7 @@ beforeEach(async () => {
   root = createRoot(container);
   start = mock.fn();
   stop = mock.fn();
-  props = { status: "idle", activity: "listening", error: null, focus: "Sensor assembly", step: "Step 4: Failure analysis", disabled: false, onStart: start, onStop: stop };
+  props = { status: "idle", activity: "listening", error: null, focus: "Sensor assembly", step: "Step 4: Failure analysis", disabled: false, helperTimeoutMs: 30_000, onStart: start, onStop: stop };
   await render();
 });
 

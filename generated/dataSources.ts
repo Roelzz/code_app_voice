@@ -42,6 +42,90 @@ export default {
       }
     }
   },
+  "agentnode": {
+    "tableId": "",
+    "version": "",
+    "primaryKey": "",
+    "dataSourceType": "Connector",
+    "apis": {
+      "InvokeAgent": {
+        "path": "/{connectionId}/powerautomate/agentnodes/conversations",
+        "method": "POST",
+        "parameters": [
+          {
+            "name": "connectionId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "type": "object"
+          },
+          {
+            "name": "x-ms-conversation-id",
+            "in": "header",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "responseInfo": {
+          "201": {
+            "type": "object"
+          },
+          "default": {
+            "type": "void"
+          }
+        }
+      },
+      "InvokeDefinition": {
+        "path": "/{connectionId}/copilotflows/agentnodes/invokeDefinition",
+        "method": "POST",
+        "parameters": [
+          {
+            "name": "connectionId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "type": "object"
+          },
+          {
+            "name": "x-ms-conversation-id",
+            "in": "header",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "responseInfo": {
+          "200": {
+            "type": "object"
+          },
+          "default": {
+            "type": "void"
+          }
+        }
+      }
+    }
+  },
   "new_5fdfmea_20realtime_20voice_20broker_5fcb638419537c7c20": {
     "tableId": "",
     "version": "",
