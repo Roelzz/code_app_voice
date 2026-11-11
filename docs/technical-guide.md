@@ -1,0 +1,276 @@
+# Technical guide
+
+This guide explains the dual-transport preview behind the [integration showcase](../README.md), not a turnkey deployment. Both specialist invocation paths are implemented in this branch; only the selected path handles a request. Microsoft feature and prerequisite references were reviewed on 11 November 2026; check current documentation before adapting the sample. Local tests, synthetic-host checks and a successful build do not establish hosted agent or voice acceptance.
+
+## Contents
+
+- [Architecture and answer routing](#architecture-and-answer-routing)
+- [Connector and identity boundaries](#connector-and-identity-boundaries)
+- [Realtime voice lifecycle](#realtime-voice-lifecycle)
+- [Workshop data model](#workshop-data-model)
+- [Adapting the sample](#adapting-the-sample)
+- [Development and checks](#development-and-checks)
+- [Troubleshooting](#troubleshooting)
+- [Source map](#source-map)
+- [Historical and template references](#historical-and-template-references)
+
+## Architecture and answer routing
+
+The React application holds the workshop model and assembles bounded prompts. TanStack Query owns asynchronous connector requests; generated services route those requests through the Microsoft Copilot Managed Runtime host. The host supplies user identity and applies platform governance.
+
+The chooser selects **one** answer source:
+
+| Choice | Current implementation |
+|---|---|
+| Microsoft 365 Copilot (default) | Generated Work IQ Copilot connector; optional Microsoft 365 file-search prompting |
+| Failure Mode Identifier | Published Copilot Studio specialist, using the selected MCP or Agent connector transport |
+| Failure Risk Prioritizer | Published Copilot Studio specialist, using the selected MCP or Agent connector transport |
+| Corrective Action Advisor | Published Copilot Studio specialist, using the selected MCP or Agent connector transport |
+
+Typed controls and the realtime `ask_copilot` callback use the same selected-helper session. Selection is manual; there is no automatic routing or fallback. Work IQ and Studio are alternatives, not a required chain.
+
+For a Studio specialist, the adjacent **MCP | Agent connector** toggle selects **EITHER MCP OR Agent Node with custom client/polling code**. It is not a second answer-source picker or a chain of two transports. MCP is the specialist default. The control is hidden for Work IQ and disabled during an outstanding helper request, including a voice tool call.
+
+The voice model is instructed to use the selected helper as the only answer source, then speak a concise version of its response. This is an application constraint, not a claim that Azure Realtime lacks reasoning capabilities.
+
+Changing helpers, changing transport or starting a new conversation stops realtime/read-aloud, clears output and resets the specialist conversation. `HelperSession.setTransport()` rejects changes while busy; after a valid change, the next request has no previous conversation ID or MCP initialization state. Switching back to MCP performs a fresh initialize/list/call sequence. Controls subscribe to the session's actual busy gate: a timeout does not unlock them while upstream work remains pending, but late settlement re-enables transport selection without an incidental UI update. Helper/transport selection and conversation IDs remain in session memory. Late replies cannot replace the output of a newer conversation; an upstream timeout does not cancel remote execution.
+
+## Connector and identity boundaries
+
+### Generated bindings
+
+[Microsoft's connector guidance][data] distinguishes the connector definition, authenticated connection, bound data source and generated service. Use App Builder or the supported `ms app add data-source` / `refresh data-source` tooling to generate `generated/` and app bindings. The supported application pattern calls generated services, not browser-direct Graph/Power Platform HTTP requests. Do not hand-edit generated clients or transplant another app's identity.
+
+This preview carries four integrations: the Microsoft 365 answer route, specialist MCP, Agent Node and the voice-token broker. Both specialist bindings are present to support the runtime toggle, but a specialist request uses only one. MCP and Work IQ use generated services; the experimental Agent Node adapter reuses generated operation metadata for submission and then polls through the existing authenticated host channel. That exception is described below and is **not a supported production contract**.
+
+### Microsoft 365 answer route
+
+`src/connectors/workiq-copilot-chat.ts` calls the generated `mcp_m365copilot` operation. It sends a JSON-RPC `tools/call` for `copilot_chat` with a unique ID and a `message`; it does not perform an MCP initialization handshake or maintain a Work IQ conversation ID.
+
+The parser correlates the response ID, reads text content blocks, extracts the reply envelope and rejects prompt echoes. Structured suggestions must match the requested flat schema before they can be offered for addition. Connector, tool, parsing and timeout failures remain distinct safe errors, never empty successful results.
+
+**Legacy integration:** the generated binding is the application-specific Copilot MCP surface, despite its Work IQ label. The [current Copilot MCP reference][legacy] describes these application-specific tools as backward-compatibility-only and advises against using them in new projects or production. [Unified Work IQ][workiq] is the current direction for new development; adopting it would require separate connector, authentication, contract and billing work, not a label change.
+
+Keep licensing statements scoped to the surface being used. The existing Microsoft 365 Copilot route needs an authorized connection, the relevant Copilot entitlement and source-content permissions. Current unified Work IQ API documentation describes usage-based Copilot Credits independently of a Microsoft 365 Copilot license; that is not proof of entitlement to this legacy connector. A Studio-only integration does not universally require a Microsoft 365 Copilot license.
+
+### Copilot Studio specialist MCP
+
+When **MCP** is selected, `HelperSession.mcpText()` calls the generated specialist connector, whose [OpenAPI](../specialist-connector/openapi.json) and [C# transport](../specialist-connector/Script.csx) restrict requests to three fixed agent paths and the `send-message` tool. It completes MCP initialization, discovers the tool once per selected conversation and supports bounded JSON or server-sent-event responses through the connector. The browser does not consume an unbounded remote SSE stream.
+
+App-side parsing accepts only the unique matching JSON-RPC result, validates conversation GUID continuity and combines ordered text once. Plain-language clarification stays text; only complete, schema-validated failure-mode/action suggestions can expose an explicit Add action. An HTTP-200 policy rejection is still a failure.
+
+The agents use the GitHub Copilot harness. The standard Microsoft Copilot Studio connector's `ExecuteCopilotAsyncV2` action rejected these agents; it is **not** the separate platform-provided Agent Node connector. Microsoft documents the [standard action][execute] and [harness-dependent automation support][harness] separately. Neither the MCP path nor this Agent Node preview implies that the standard action supports these agents.
+
+**For the MCP route only**, the [channel documentation][studio] requires:
+
+- An agent published at least once and access for each calling user.
+- An **early release cycle environment** where the preview MCP client channel is available. Verify the release cycle and actual channel; naming an environment "Preview" or making it a normal sandbox is not enough.
+- An Entra registration in the agent's tenant and an OAuth authorization-code-capable client.
+- Only the needed delegated MCP permission, `MCS.InvokeAsMCP`, with consent as required by tenant policy. A2A is a separate permission and is not required by this MCP integration.
+- The client's exact redirect URI registered in Entra. Use the channel's actual endpoint and corresponding scope host; do not assume production and preproduction hosts are interchangeable.
+
+The app's custom connector holds OAuth configuration. Secrets belong in an approved secret store/platform configuration, never the source tree. The [API properties template](../specialist-connector/apiProperties.template.json) omits secret material.
+
+MCP has a **30-second app-side wait** covering initialization, discovery and the answer. This is the sample's limit, not a universal MCP protocol timeout. A failure clears MCP initialization/conversation state. The app does not automatically retry, and keeps its single-flight gate until the upstream operation settles.
+
+### Agent connector with custom polling
+
+When **Agent connector** is selected, `HelperSession.agentNodeText()` calls [`agentnode-transport.ts`](../src/connectors/agentnode-transport.ts). It uses the platform-provided `shared_agentnode` binding for `InvokeAgent`, not `ExecuteCopilotAsyncV2` and not an additional MCP call.
+
+This route needs its own generated binding, authorized connection, agent/environment access and compatible SDK/host behavior. Verify that connector's availability and permissions separately; the MCP client-channel rollout and delegated `MCS.InvokeAsMCP` requirements above are **not universal prerequisites for both routes**. Existing bindings and IDs do not provision another tenant.
+
+The generated SDK result alone does not retain the HTTP 202 completion headers needed here. The app-owned adapter therefore:
+
+1. Reuses the SDK's existing authenticated channel, observed at startup by [`shared-sdk-channel.ts`](../src/connectors/shared-sdk-channel.ts). It observes the public bridge or SDK-created fallback instance, restores its temporary observer and does not create a second connection or replace the policy monitor.
+2. Uses the generated Agent Node metadata to submit **one POST**, with the selected specialist and any current conversation ID.
+3. Accepts an immediate complete result, or follows HTTP **202** using validated `Location` and `Retry-After` headers with **GET polling only** on the same connection/context.
+4. Validates HTTPS origin, exact connector/connection path, bounded polling handle, environment query, no dot-segment traversal and conversation continuity. Opaque query bytes are preserved without logging or reconstructing them.
+
+**Undocumented-internals risk:** observing/intercepting the SDK-owned channel and sending raw host polling requests are preview-only workarounds, not supported Managed Runtime application contracts. Exported shared classes do not make those assumptions a production guarantee. SDK/host changes can break the route; do not deploy it as a production-ready solution.
+
+The deadline is **180 seconds**, including channel readiness, submission and polling. It does not extend server limits or cancel upstream work. No automatic POST retries are made. If a dispatched request's outcome cannot be confirmed, the session requires explicit **New conversation** before another attempt; this starts a separate conversation, not cancellation of the previous run. A proven pre-dispatch channel failure is reported safely and does not claim that a request was sent.
+
+Failure to observe/reuse the channel must fail only this experimental path, not reroute to another helper or transport. Synthetic production-bundle checks exercise a protected observer while the real generated Work IQ and MCP clients still answer; they do not prove hosted behavior or resilience to a genuinely unavailable shared SDK service.
+
+### Runtime access, licensing and policies
+
+The [Managed Runtime SDK][runtime] is documented as preview. The [security documentation][security] separately requires deployment to a **Managed Environment**. Users need app access and any applicable environment security-group membership; sharing alone does not bypass environment access.
+
+Current runtime licensing documentation lists **Power Apps Premium** or **Managed Application Copilot Credits** for running apps. Copilot Studio usage and Azure Realtime consumption have their own licensing/capacity considerations. Do not infer that a single license covers every part of this sample.
+
+Review the effective environment policy and any inherited environment-group rules on both the app and agent sides. [ACP][acp] has a default-deny allowlist for covered connectors/actions, and supports MCP server-level blocking, not individual MCP-tool control. Its documented coverage currently includes certified connectors and MCP servers; custom and HTTP connectors still require classic DLP where those policies are evaluated. **Mixed mode** evaluates ACP alongside classic policies and applies the most restrictive effective rules. **ACP-only mode ignores classic policies**, without adding ACP coverage for custom or HTTP connectors; do not assume those connectors remain protected by classic DLP in that mode. The Managed Runtime data guidance also notes that classic DLP Business/Non-Business classification is not supported for apps; do not assume that classification alone governs an app's data flows.
+
+Review the effective policy for the **chosen transport's connector** as well as agent access. The sample's specialist MCP and broker custom connectors need appropriate governance review even when the underlying target speaks MCP. Do not treat ACP's MCP support as automatic coverage for every custom connector, assume that Agent Node and the standard Studio connector have identical policy coverage, or change shared policies merely to make a demonstration work.
+
+## Realtime voice lifecycle
+
+### Credential and network paths
+
+The [Azure Function](../voice-broker/function_app.py) uses `DefaultAzureCredential` with managed identity in Azure to request a short-lived Realtime client credential. Entra authentication is enforced by the Function App's Easy Auth configuration, not by an embedded browser API key. The function route's anonymous authorization level by itself does not provide that protection; retain and verify the external authentication boundary.
+
+The broker requires `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_DEPLOYMENT`. Give the broker identity only appropriate resource-scoped inference access; the sample uses **Cognitive Services OpenAI User**, whose documented capabilities include Entra-authenticated inference. See [Azure OpenAI RBAC][rbac] and the [broker notes](../voice-broker/README.md).
+
+The generated broker operation returns a credential, expiry, signaling URL and model. The browser validates the response, keeps the credential only transiently in memory and establishes WebRTC **directly with Azure**. The broker does not relay microphone audio or answer workshop questions.
+
+The sample pins an exact calls URL and expected model in `src/connectors/realtime-token.ts`; changing the Azure deployment requires deliberate validation/configuration changes, not merely a new broker variable. Use the deployment name supported by your Azure resource and verify [Realtime availability and quota][realtime].
+
+The Managed Runtime [CSP][csp] must permit the exact Azure OpenAI signaling origin in `connect-src`. Preserve enforcement and other existing rules; do not add wildcards. Browser HTTPS, microphone permission, WebRTC/audio support and permitted network routes are separate requirements. CORS/preflight success does not prove CSP, token authorization or working audio.
+
+### Turns, tool results and cleanup
+
+The user must select Start; merely opening the dialog does not acquire the microphone. Once connected, the session requires tool calls for questions. The application:
+
+1. Receives `ask_copilot` arguments and correlates the call and response IDs.
+2. Calls the currently selected helper with workshop context; duplicate/overlapping tool calls are rejected.
+3. Waits for the helper result and the associated Realtime response completion.
+4. Sends the matching `function_call_output` and creates the speech continuation with `tool_choice: "none"` to avoid repeatedly calling the tool.
+
+Errors are spoken/reported as failures rather than replaced with another helper or transport. Work IQ keeps its **hard 30-second host limit**. Specialist requests use the selected transport's app-side limit: **30 seconds for MCP** initialization/discovery/answer, or **180 seconds for Agent connector** readiness/submission/polling. Automatic query retries are disabled. App-side waits cannot extend host limits or cancel upstream execution.
+
+Stop works during setup. Dialog dismissal, helper/transport changes and unmount cleanup close the peer/data channel, stop microphone tracks, clear audio/timers and invalidate late work. Changing helper or transport requires a new explicit Start. The activity display follows real session, tool and audio events; it is not a measured audio-level visualizer.
+
+Browser dictation and read-aloud are separate controls built on Web Speech and speech synthesis. They share audio ownership with realtime so starting one stops competing speech features. Reduced-motion and forced-colors treatments are retained.
+
+## Workshop data model
+
+The fictional example is a wearable vital-signs patch. State is initialized from `SAMPLE_DFMEA` and is in-memory; there is no database or collaborative persistence.
+
+| Entity | Relationship and responsibility |
+|---|---|
+| `DfmeaProject` | Workshop and participants |
+| `StructureElement` | System/subsystem/component tree using `parentId` |
+| `DesignFunction` | Belongs to an element; includes `requirementRef` |
+| `FailureMode` | Links element/function to an effect, severity and optional hazard reference |
+| `FailureCause` | Carries occurrence, detection, prevention/detection controls and team-selected priority |
+| `ImprovementAction` | Prevention/detection action, owner, due date and workflow status |
+
+Severity belongs to the failure effect; occurrence and detection belong to each cause. Ratings use 1–10 scales. `RPN = severity × occurrence × detection` is shown only when all three exist. Action priority is not calculated from an invented threshold or unlicensed handbook table. Workflow status and urgency are separate.
+
+Suggestions carry `origin: "ai"` and `reviewed: false` until team review. Voice does not automatically mutate the model. ISO 14971 hazard references support workshop reasoning, not automatic compliance. Planning fields, richer structure/function editing and reporting remain incomplete.
+
+## Adapting the sample
+
+Fork or clone the code to explore the interaction pattern, not to inherit the author's deployment. Before any hosted test, design your own environment, identity and data boundaries.
+
+| Boundary | What needs deliberate adaptation |
+|---|---|
+| Managed application | Create an authorized app identity and use supported tooling for its generated connections/bindings; do not reuse checked-in deployment IDs |
+| Studio helpers | Publish and share your own agents; configure the chosen route's IDs, generated binding and access. For MCP, also verify channel rollout, fixed paths and delegated OAuth. For Agent connector, review its own access plus the unsupported channel/polling assumptions |
+| Microsoft 365 route | Choose a currently supported surface, confirm entitlement/billing and validate its generated request/response contract |
+| Voice broker | Provision your own authenticated Function and Azure deployment, managed identity/RBAC and connector |
+| Browser validation | Align the exact endpoint/model checks, generated token response and CSP with your resources |
+| Domain and data | Replace the fictional DFMEA model/prompts as needed; design persistence, retention and review controls separately |
+
+The app's Managed Environment and, when choosing MCP, the agents' early-release environment serve different purposes and need not be the same environment. Cross-environment or cross-tenant compatibility is not provisioned or guaranteed by this repository. Rebinding services does not migrate sharing, credentials, policies or business data.
+
+## Development and checks
+
+### Application versus platform tooling
+
+The checked-in application uses React 19, strict TypeScript, Vite 7, Tailwind CSS 4, shadcn/Radix, TanStack Query 5 and `@microsoft/managed-apps` **0.5.11**. The experimental adapter directly declares the already-used `@microsoft/managed-apps-common` **0.19.0**. Its established application toolchain is **Node.js 22 LTS** (Vite 7 requires Node 20.19+ or 22.12+). Keep both lockfiles and SDK versions pinned unless an upgrade is approved.
+
+That is distinct from the **current Managed Runtime CLI prerequisites**, which [Microsoft lists][runtime] as Node.js LTS **24.11.0+**, Git **2.27.0+** and Git Credential Manager. Use an appropriately isolated tooling runtime; a newer CLI requirement does not silently upgrade this app's SDK or development stack. Python **3.12** and UV are used for the broker only.
+
+With approved existing dependencies, the application's local UI loop is:
+
+```bash
+npm run dev
+# http://localhost:5173
+```
+
+To restore the checked-in application dependencies when needed, use `npm ci`; it is not an instruction to change the manifest or lockfile. A plain Vite localhost server does not supply the Managed Runtime connector host. The current CLI also documents `ms app dev` for hosted-connection development; that has its own runtime, licensing and authentication requirements and is different from `npm run dev`.
+
+Run the existing application checks:
+
+```bash
+node --test tests/*.test.mjs
+npm run typecheck
+npm run lint
+npm run build:check
+```
+
+`build:check` validates a production build without writing output and uses POSIX environment syntax (Git Bash/WSL on Windows). The two protected-template Fast Refresh lint warnings are known. `bun run check` uses Bun's `--parallel` support; if the installed Bun lacks that flag, run the three individual check scripts above. The npm commands do not require Bun. On Node 22, use the explicit test-file glob above rather than `node --test tests/`.
+
+The Node tests cover both specialist transports, switching/reset and busy gates, per-route timeouts, MCP parsing, native completion URL/polling validation, token validation, voice cancellation/cleanup, tool-result sequencing and audio ownership. Fixture-based tests and synthetic production-bundle startup checks are not evidence of real hosted agent/microphone/audio acceptance. That requires an authorized selected-helper test through **both** specialist toggle positions; do not infer one route's result from the other.
+
+The broker has existing Ruff/Pytest checks. Use an external environment so vendored packages are not scanned by root ESLint:
+
+```bash
+cd voice-broker
+UV_PROJECT_ENVIRONMENT=/tmp/dfmea-broker-venv uv run ruff check .
+UV_PROJECT_ENVIRONMENT=/tmp/dfmea-broker-venv uv run pytest -q
+```
+
+The specialist C# transport also has an SDK-only test harness, with no added NuGet packages. With an already-available .NET 10 SDK:
+
+```bash
+dotnet restore tests/specialist-connector/Check.csproj --source tests/specialist-connector
+dotnet run --project tests/specialist-connector/Check.csproj --no-restore
+```
+
+### Source publication is not deployment
+
+This public GitHub repository shares source, not a provisioned deployment binding. Current [Managed Runtime guidance][runtime] supports platform-managed Git and eligible GitHub Enterprise Cloud organization repositories; a public repository under a personal account is not automatically a supported bring-your-own deployment repository.
+
+App Builder and the supported `ms` CLI are release paths. Any actual deployment requires authorized target access, correctly generated bindings, validation and an exact successful platform build before deployment. `pac code push` is not this app's release mechanism. This guide does not authorize a live switch, agent republish or policy change.
+
+## Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| MCP client channel is missing | Confirm **Early** release cycle and actual channel rollout, not the environment's name or sandbox label |
+| Specialist sign-in fails | Published agent/user access and the selected connector's authorized connection; for MCP also check delegated permission, endpoint/scope host, exact redirect URI and required consent |
+| Agent connector reports a channel diagnostic | The existing SDK channel could not be captured/reused safely; this is an experimental route limitation, not permission to create a second connection or silently switch transport |
+| Agent connector requires New conversation | A submitted run's outcome is unknown. Explicit reset is required before another request; it does not cancel the old run |
+| Transport toggle is hidden or disabled | It is specialist-only and blocked while a helper request is outstanding; Work IQ does not use it |
+| Connector is denied | Effective app/agent environment policies, inherited rules and classic DLP coverage for custom connectors; do not disable safeguards |
+| Microsoft 365 helper cannot retrieve content | Connector-specific entitlement, connection identity, source permissions and legacy-surface availability |
+| Broker returns 401 | Entra authentication is required; anonymous access should fail |
+| Broker cannot mint a credential | Endpoint/deployment settings, managed identity, resource-scoped inference access, quota and expiry |
+| Signaling is blocked | Actual app document CSP and the exact signaling origin, plus network permission; outer-player settings are not app-frame proof |
+| Voice session has no audio | HTTPS, microphone/playback permission, browser WebRTC support, audio ownership and session events |
+| Stop or helper switch appears ineffective | Inspect microphone-track/peer cleanup and late-result guards, not just token issuance |
+| Local connector handshake times out | Plain Vite lacks the host; use an authorized Managed Runtime test surface |
+
+Builds, generated bindings, token issuance and network preflight each prove only their own stage. A real selected-helper answer and actual microphone/playback/Stop behavior need an authorized end-to-end test.
+
+## Source map
+
+| Path | Purpose |
+|---|---|
+| [`src/data/dfmea.ts`](../src/data/dfmea.ts) | Model, rating helpers, structure traversal and fictional dataset |
+| [`src/pages/home.tsx`](../src/pages/home.tsx) | Workshop UI, mutations and broker callback wiring |
+| [`src/components/dfmea-ui.tsx`](../src/components/dfmea-ui.tsx) | Ratings, chain editor and semantic status/priority tones |
+| [`src/components/ai-facilitator.tsx`](../src/components/ai-facilitator.tsx) | Prompts, transport toggle, query lifecycle, suggestions and review |
+| [`src/components/helper-chooser.tsx`](../src/components/helper-chooser.tsx) | Manual four-helper selection |
+| [`src/connectors/dfmea-helpers.ts`](../src/connectors/dfmea-helpers.ts) | Selected MCP/Agent Node orchestration, conversations, reset and single-flight guard |
+| [`src/connectors/agentnode-transport.ts`](../src/connectors/agentnode-transport.ts) | Experimental single POST and validated authenticated completion polling |
+| [`src/connectors/shared-sdk-channel.ts`](../src/connectors/shared-sdk-channel.ts) | Preview-only observation of the existing SDK connection |
+| [`src/connectors/workiq-copilot-chat.ts`](../src/connectors/workiq-copilot-chat.ts) | Generated Microsoft 365 call, parsing and safe errors |
+| [`src/connectors/realtime-token.ts`](../src/connectors/realtime-token.ts) | Broker response validation |
+| [`src/components/voice-console.tsx`](../src/components/voice-console.tsx) | Explicit Start/Stop and activity display |
+| [`src/hooks/use-realtime-voice.ts`](../src/hooks/use-realtime-voice.ts) | WebRTC, tool callback and teardown |
+| [`src/hooks/use-voice.ts`](../src/hooks/use-voice.ts) | Dictation/read-aloud and shared audio ownership |
+| [`generated/`](../generated/) and `ms.config.json` | Tool-owned deployment-specific clients and bindings |
+| [`voice-broker/`](../voice-broker/) | Azure Function, connector OpenAPI and Python tests |
+| [`specialist-connector/`](../specialist-connector/) | MCP OpenAPI, bounded transport and OAuth template |
+| [`tests/`](../tests/) | Existing Node/React and C# checks |
+
+## Historical and template references
+
+The [operational handover](HANDOVER.md) is preserved as **historical, deployment-specific evidence**, not a universal prerequisite list or a statement of current live state. Its environment identities, release/rollback records and acceptance chronology are intentionally not repeated here.
+
+The [App Builder template notes](app-builder-template.md) describe the original scaffold context, not a standalone reproduction guide. Read [AGENTS.md](../AGENTS.md) before changing protected app files. The [broker documentation](../voice-broker/README.md) provides component-specific notes.
+
+[data]: https://learn.microsoft.com/en-us/microsoft-365/copilot-managed-runtime/developer/apps/connect-to-data?view=o365-worldwide
+[runtime]: https://learn.microsoft.com/en-us/microsoft-365/copilot-managed-runtime/developer/apps/?view=o365-worldwide
+[security]: https://learn.microsoft.com/en-us/microsoft-365/admin/manage/apps/security-compliance?view=o365-worldwide
+[studio]: https://learn.microsoft.com/en-us/microsoft-copilot-studio/agents-experience/publication-channels-mcp-agent-to-agent
+[execute]: https://learn.microsoft.com/en-us/power-apps/developer/code-apps/how-to/connect-to-copilot-studio
+[harness]: https://learn.microsoft.com/en-us/power-automate/call-copilot-studio-agent
+[legacy]: https://learn.microsoft.com/en-us/microsoft-copilot-studio/mcp-copilot-tools
+[workiq]: https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq/
+[acp]: https://learn.microsoft.com/en-us/power-platform/admin/advanced-connector-policies
+[rbac]: https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/role-based-access-control
+[realtime]: https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/realtime-2
+[csp]: https://learn.microsoft.com/en-us/microsoft-365/admin/manage/apps/governance?view=o365-worldwide#content-security-policy
