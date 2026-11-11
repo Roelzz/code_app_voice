@@ -3,6 +3,7 @@ import { afterEach, mock, test } from "node:test";
 import { readFile } from "node:fs/promises";
 import ts from "typescript";
 import { CONVERSATION, NEXT_CONVERSATION, mcpService, rpcResult, toolResult, toolCalls } from "./mcp-fixture.mjs";
+import { agentNodeService, nativeAgentMock } from "./agentnode-fixture.mjs";
 
 const service = mcpService();
 const workiq = {
@@ -13,16 +14,19 @@ const workiq = {
 };
 globalThis.helperTestService = service;
 globalThis.helperTestWorkiq = workiq;
+globalThis.helperTestNative = nativeAgentMock(agentNodeService());
 const source = await readFile(new URL("../src/connectors/dfmea-helpers.ts", import.meta.url), "utf8");
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 }).outputText
+  .replace(/import \{([^}]+)\} from "\.\/agentnode-transport";/, "const {$1} = globalThis.helperTestNative;")
   .replace(/import \{ DFMEASpecialistMCPService \} from "\.\.\/\.\.\/generated";/, "const DFMEASpecialistMCPService = globalThis.helperTestService;")
   .replace(/import \{([\s\S]*?)\} from "@\/connectors\/workiq-copilot-chat";/, "const {$1} = globalThis.helperTestWorkiq;");
 const { DFMEA_HELPERS, HELPER_ENVIRONMENT, HelperSession, parseMcpResult, parseMcpReply, helperErrorMessage } =
   await import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
 delete globalThis.helperTestService;
 delete globalThis.helperTestWorkiq;
+delete globalThis.helperTestNative;
 
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
 afterEach(() => {

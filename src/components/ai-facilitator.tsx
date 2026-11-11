@@ -20,11 +20,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ConnectorErrorState, ErrorState } from "@/components/states";
 import { DictationButton } from "@/components/dictation-button";
 import { VoiceConsole } from "@/components/voice-console";
 import { HelperChooser } from "@/components/helper-chooser";
-import { getHelper, HelperError, HelperSession, helperErrorMessage, type HelperId } from "@/connectors/dfmea-helpers";
+import { getHelper, HelperError, HelperSession, helperErrorMessage, type HelperId, type SpecialistTransport } from "@/connectors/dfmea-helpers";
 import { speechOutputSupported, useSpeechReader } from "@/hooks/use-voice";
 import { useRealtimeVoice, type RealtimeVoiceToken } from "@/hooks/use-realtime-voice";
 import {
@@ -237,7 +238,12 @@ function speechParts(title: string, result: AiResult): string[] {
 /** User-safe explanation of a failed facilitator request; never shows upstream text. */
 function describeAiError(error: unknown): { title: string; description: string; code: string } {
   if (error instanceof HelperError) {
-    return { title: "The selected helper couldn't complete this request", description: error.message, code: error.code };
+    return {
+      title: error.channelReason ? `Native channel unavailable [${error.channelReason}]`
+        : error.requiresNewConversation ? "New conversation required" : "The selected helper couldn't complete this request",
+      description: error.message,
+      code: error.channelReason ? `channel/${error.channelReason}` : error.code,
+    };
   }
   if (error instanceof WorkIqTimeoutError) {
     return {
@@ -354,6 +360,7 @@ interface AiFacilitatorProps {
 
 export function AiFacilitator(props: AiFacilitatorProps) {
   const [helperId, setHelperId] = useState<HelperId>("workiq");
+  const [transport, setTransport] = useState<SpecialistTransport>("mcp");
   const [conversation, setConversation] = useState(0);
   const [session] = useState(() => new HelperSession());
   function select(id: HelperId) {
@@ -361,8 +368,14 @@ export function AiFacilitator(props: AiFacilitatorProps) {
     setHelperId(id);
     setConversation((value) => value + 1);
   }
+  function changeTransport(value: SpecialistTransport) {
+    session.setTransport(value);
+    setTransport(value);
+    setConversation((current) => current + 1);
+  }
   useEffect(() => () => session.select("workiq"), [session]);
-  return <FacilitatorPanel key={conversation} {...props} helperId={helperId} conversation={conversation} session={session} onSelect={select} />;
+  return <FacilitatorPanel key={conversation} {...props} helperId={helperId} transport={transport} conversation={conversation}
+    session={session} onSelect={select} onTransportChange={changeTransport} />;
 }
 
 function FacilitatorPanel({
@@ -374,12 +387,18 @@ function FacilitatorPanel({
   requestRealtimeToken,
   className,
   helperId,
+  transport,
   conversation,
   session,
   onSelect,
-}: AiFacilitatorProps & { helperId: HelperId; conversation: number; session: HelperSession; onSelect: (id: HelperId) => void }) {
+  onTransportChange,
+}: AiFacilitatorProps & {
+  helperId: HelperId; transport: SpecialistTransport; conversation: number; session: HelperSession;
+  onSelect: (id: HelperId) => void; onTransportChange: (transport: SpecialistTransport) => void;
+}) {
   const helper = getHelper(helperId);
   const specialist = helperId !== "workiq";
+  const waitLabel = specialist && transport === "agentnode" ? "three minutes" : "30 seconds";
   const [request, setRequest] = useState<AiRequest | null>(null);
   const [seq, setSeq] = useState(0);
   const [question, setQuestion] = useState("");
@@ -429,6 +448,8 @@ function FacilitatorPanel({
     retry: false,
   });
   const busy = query.isFetching;
+  const newConversationRequired = specialist && session.requiresNewConversation;
+  const transportBusy = busy || voiceQuestion.isPending || session.isBusy;
 
   useEffect(() => {
     if (!busy || request === null) return;
@@ -446,7 +467,7 @@ function FacilitatorPanel({
   }, [realtimeVoice.status, readAloud, request, busy, query.isSuccess, query.data, query.dataUpdatedAt, speak]);
 
   function start(move: MoveId, text = "") {
-    if (busy || voiceQuestion.isPending) return;
+    if (busy || voiceQuestion.isPending || session.requiresNewConversation) return;
     realtimeVoice.stop();
     stopSpeaking();
     const next = seq + 1;
@@ -516,20 +537,41 @@ function FacilitatorPanel({
         </dl>
       </div>
 
-      <HelperChooser selected={helperId} disabled={busy} restoreFocus={conversation > 0} onSelect={(id) => {
-        realtimeVoice.stop();
-        stopSpeaking();
-        onSelect(id);
-      }} onReset={() => {
-        realtimeVoice.stop();
-        stopSpeaking();
-        onSelect(helperId);
-      }} />
+      <div className="flex flex-wrap items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <HelperChooser selected={helperId} disabled={busy} restoreFocus={conversation > 0} onSelect={(id) => {
+            realtimeVoice.stop();
+            stopSpeaking();
+            onSelect(id);
+          }} onReset={() => {
+            realtimeVoice.stop();
+            stopSpeaking();
+            onSelect(helperId);
+          }} />
+        </div>
+        {specialist && (
+          <div className="space-y-1">
+            <span id="specialist-transport-label" className="text-xs text-muted-foreground">Specialist transport</span>
+            <ToggleGroup type="single" variant="outline" size="sm" value={transport} disabled={transportBusy}
+              aria-labelledby="specialist-transport-label"
+              onValueChange={(value) => {
+                if (transportBusy || (value !== "mcp" && value !== "agentnode") || value === transport) return;
+                realtimeVoice.stop();
+                stopSpeaking();
+                onTransportChange(value);
+              }}>
+              <ToggleGroupItem value="mcp">MCP</ToggleGroupItem>
+              <ToggleGroupItem value="agentnode">Agent connector</ToggleGroupItem>
+            </ToggleGroup>
+            <p className="text-xs text-muted-foreground">Wait limit: {waitLabel}</p>
+          </div>
+        )}
+      </div>
 
       <div className="grid grid-cols-2 gap-2" role="group" aria-label="Facilitator moves">
         {MOVES.map((move) => {
           const Icon = move.icon;
-          const disabled = busy || voiceQuestion.isPending || (move.needsChain && !chain);
+          const disabled = busy || voiceQuestion.isPending || newConversationRequired || (move.needsChain && !chain);
           return (
             <Button
               key={move.id}
@@ -563,7 +605,7 @@ function FacilitatorPanel({
           autoComplete="off"
         />
         <DictationButton label="a question for the facilitator" value={question} onChange={setQuestion} disabled={busy} />
-        <Button type="submit" size="icon" disabled={busy || voiceQuestion.isPending || !question.trim()} aria-label="Ask the facilitator">
+        <Button type="submit" size="icon" disabled={busy || voiceQuestion.isPending || newConversationRequired || !question.trim()} aria-label="Ask the facilitator">
           <SendHorizontal aria-hidden="true" />
         </Button>
       </form>
@@ -599,7 +641,7 @@ function FacilitatorPanel({
             error={realtimeVoice.error || voiceMessage}
             focus={element?.name ?? data.project.product}
             step={`Step ${step.number}: ${step.title}`}
-            disabled={busy}
+            disabled={busy || newConversationRequired}
             onStart={() => {
               setVoiceMessage(null);
               stopSpeaking();
@@ -620,8 +662,8 @@ function FacilitatorPanel({
         <p role="status" aria-live="polite" className="text-xs text-muted-foreground">
           {busy
             ? slow
-              ? `Still working with ${helper.name}. The app waits up to 30 seconds.`
-              : `Asking ${helper.name}. This can take up to 30 seconds.`
+              ? `Still working with ${helper.name}. The app waits up to ${waitLabel}.`
+              : `Asking ${helper.name}. This can take up to ${waitLabel}.`
             : ""}
         </p>
 
@@ -659,10 +701,10 @@ function FacilitatorPanel({
                       {reader.speaking ? "Stop reading" : "Read aloud"}
                     </Button>
                   )}
-                  <Button type="button" variant="ghost" size="xs" onClick={() => query.refetch()}>
+                  {!newConversationRequired && <Button type="button" variant="ghost" size="xs" onClick={() => query.refetch()}>
                     <RotateCcw aria-hidden="true" />
                     Regenerate
-                  </Button>
+                  </Button>}
                 </div>
               )}
             </div>
@@ -690,10 +732,10 @@ function FacilitatorPanel({
                       className="py-6"
                       action={
                         <div className="flex flex-col items-center gap-2">
-                          <Button type="button" variant="outline" size="sm" onClick={() => query.refetch()}>
+                          {!newConversationRequired && <Button type="button" variant="outline" size="sm" onClick={() => query.refetch()}>
                             <RotateCcw aria-hidden="true" />
                             Try again
-                          </Button>
+                          </Button>}
                           <span className="text-xs text-muted-foreground">Code: {info.code}</span>
                         </div>
                       }
